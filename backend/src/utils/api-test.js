@@ -1,4 +1,4 @@
-require('dotenv').config({ path: '../../.env' });
+require('dotenv').config({ path: '../.env' });
 const axios = require('axios');
 
 // Colors for console output
@@ -53,76 +53,87 @@ async function testDeepgramAPI() {
   }
 }
 
-async function testClaudeAPI() {
-  console.log(`\n${colors.blue}=== Testing Claude API ===${colors.reset}`);
+async function testOllamaAPI() {
+  console.log(`\n${colors.blue}=== Testing Ollama (Qwen2.5B) ===${colors.reset}`);
 
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  const MODEL = process.env.ANTHROPIC_MODEL || 'claude-3-sonnet-20240229';
-
-  if (!ANTHROPIC_API_KEY) {
-    console.error(`${colors.red}✗ ANTHROPIC_API_KEY not set${colors.reset}`);
-    return false;
-  }
+  const OLLAMA_API_URL = process.env.OLLAMA_API_URL || 'http://localhost:11434';
+  const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen:2.5b';
 
   try {
-    console.log(`Sending analysis request to Claude (${MODEL})...`);
+    console.log(`Testing connection to Ollama at ${OLLAMA_API_URL}...`);
+    console.log(`Model: ${OLLAMA_MODEL}`);
 
+    // Test 1: Check if Ollama is running
+    const tagsResponse = await axios.get(`${OLLAMA_API_URL}/api/tags`, {
+      timeout: 5000
+    });
+
+    if (!tagsResponse.data?.models) {
+      console.error(`${colors.red}✗ No models found in Ollama${colors.reset}`);
+      return false;
+    }
+
+    const hasQwen = tagsResponse.data.models.some(m => m.name.includes('qwen'));
+    if (!hasQwen) {
+      console.log(`${colors.yellow}⚠ Qwen model not found. Available models:${colors.reset}`);
+      tagsResponse.data.models.forEach(m => console.log(`  - ${m.name}`));
+    }
+
+    // Test 2: Generate text with Ollama
+    console.log(`Sending analysis request to Ollama...`);
     const response = await axios.post(
-      'https://api.anthropic.com/v1/messages',
+      `${OLLAMA_API_URL}/api/generate`,
       {
-        model: MODEL,
-        max_tokens: 256,
-        messages: [
-          {
-            role: 'user',
-            content: 'Extract goals from this text: "We need to launch the API by Friday. Maria will handle authentication. Testing starts Monday."'
-          }
-        ]
+        model: OLLAMA_MODEL,
+        prompt: 'Extract goals from: "We need to launch API by Friday. Maria handles auth. Testing Monday." Output JSON only.',
+        stream: false,
+        temperature: 0.1
       },
       {
-        headers: {
-          'x-api-key': ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
+        timeout: 30000
       }
     );
 
-    if (response.data?.content?.[0]?.text) {
-      const text = response.data.content[0].text;
-      console.log(`${colors.green}✓ Claude API working${colors.reset}`);
+    if (response.data?.response) {
+      const text = response.data.response;
+      console.log(`${colors.green}✓ Ollama API working${colors.reset}`);
       console.log(`  Response (first 100 chars): "${text.substring(0, 100)}..."`);
+      console.log(`  Generated ${response.data.eval_count || '?'} tokens`);
       return true;
     } else {
       console.error(`${colors.red}✗ Unexpected response format${colors.reset}`);
       return false;
     }
   } catch (error) {
-    console.error(`${colors.red}✗ Claude API error: ${error.message}${colors.reset}`);
-    if (error.response?.data) {
-      console.error(`  Details:`, error.response.data);
+    if (error.code === 'ECONNREFUSED') {
+      console.error(`${colors.red}✗ Ollama not running. Start with: ollama serve${colors.reset}`);
+    } else {
+      console.error(`${colors.red}✗ Ollama API error: ${error.message}${colors.reset}`);
+      if (error.response?.data) {
+        console.error(`  Details:`, error.response.data);
+      }
     }
     return false;
   }
 }
 
 async function runTests() {
-  console.log(`${colors.yellow}Starting API credential tests...${colors.reset}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`${colors.yellow}Starting API tests (Deepgram + Ollama)...${colors.reset}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}\n`);
 
   const deepgramOk = await testDeepgramAPI();
-  const claudeOk = await testClaudeAPI();
+  const ollamaOk = await testOllamaAPI();
 
   console.log(`\n${colors.blue}=== Summary ===${colors.reset}`);
   console.log(`Deepgram: ${deepgramOk ? `${colors.green}✓ OK${colors.reset}` : `${colors.red}✗ FAILED${colors.reset}`}`);
-  console.log(`Claude:   ${claudeOk ? `${colors.green}✓ OK${colors.reset}` : `${colors.red}✗ FAILED${colors.reset}`}`);
+  console.log(`Ollama:   ${ollamaOk ? `${colors.green}✓ OK${colors.reset}` : `${colors.red}✗ FAILED${colors.reset}`}`);
 
-  if (deepgramOk && claudeOk) {
-    console.log(`\n${colors.green}All API tests passed! Ready for Phase 2.${colors.reset}`);
+  if (deepgramOk && ollamaOk) {
+    console.log(`\n${colors.green}✓ All API tests passed! Ready for Phase 2.${colors.reset}`);
     process.exit(0);
   } else {
-    console.log(`\n${colors.red}Some tests failed. Check credentials and try again.${colors.reset}`);
-    process.exit(1);
+    console.log(`\n${colors.yellow}⚠ Some tests need attention. See details above.${colors.reset}`);
+    process.exit(deepgramOk && ollamaOk ? 0 : 1);
   }
 }
 

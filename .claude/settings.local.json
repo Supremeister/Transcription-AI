@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(gsd-plan-phase)",
+      "Skill(gsd-plan-phase:*)",
+      "Skill(gsd-execute-phase)",
+      "Skill(gsd-execute-phase:*)",
+      "Bash(npm run:*)",
+      "Bash(node src/utils/api-test.js)",
+      "Bash(ollama pull:*)",
+      "Bash(node src/utils/test-deepgram-simple.js)",
+      "Bash(python -c \"from faster_whisper import WhisperModel; print\\(''''✅ Faster-Whisper installed!''''\\)\")",
+      "Bash(pip list:*)",
+      "Bash(npm list:*)",
+      "Bash(npm install:*)",
+      "Bash(python -c \"from faster_whisper import WhisperModel; print\\(''✓ Faster-Whisper installed''\\)\")",
+      "Bash(python -c \"from faster_whisper import WhisperModel; print\\(''OK''\\)\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Bash(python test-transcription.py)",
+      "Bash(python -c \"import torch; print\\(f''PyTorch version: {torch.__version__}''\\); print\\(f''CUDA available: {torch.cuda.is_available\\(\\)}''\\); print\\(f''CUDA version: {torch.version.cuda}''\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -m pip install pyttsx3 -q)",
+      "Bash(python generate-test-audio.py)",
+      "Bash(python test-with-speech.py)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(git add:*)"
+    ]
+  }
+}

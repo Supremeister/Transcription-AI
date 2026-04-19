@@ -1,0 +1,16 @@
+{
+  "project": "Transcription AI Service",
+  "created": "2026-04-19",
+  "version": "1.0",
+  "workflow": {
+    "planning_dir": ".planning",
+    "auto_commit": true,
+    "research_phase": true,
+    "interactive_planning": true
+  },
+  "constraints": {
+    "timeline": "1-2 weeks",
+    "scope": "MVP",
+    "priority": "quick-to-market"
+  }
+}
