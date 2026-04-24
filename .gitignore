@@ -21,5 +21,9 @@ dist-exe/
 whisper_service_dist/
 build_tmp/
 
+# Бинари (скачиваются отдельно)
+electron/resources/node.exe
+electron/resources/elevate.exe
+
 # Frontend build (генерируется npm run build)
 frontend/dist/
