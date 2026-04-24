@@ -3,28 +3,36 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Rate limiting — максимум 20 запросов в минуту
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: 'Слишком много запросов. Подождите минуту.' }
+});
+
 // Middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors({ origin: ['http://localhost:5173', 'http://127.0.0.1:5173'] }));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/api/', limiter);
 
 // Health Check
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV
+    uptime: process.uptime()
   });
 });
 
-// API Routes (to be implemented in Phase 2)
+// API Routes
 app.use('/api/transcribe', require('./routes/transcribe'));
 app.use('/api/analyze', require('./routes/analyze'));
 
@@ -36,17 +44,12 @@ app.use((req, res) => {
 // Error Handler
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
+  res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
 });
 
-// Start Server
 app.listen(PORT, () => {
-  console.log(`✓ Server running on http://localhost:${PORT}`);
-  console.log(`✓ Environment: ${process.env.NODE_ENV}`);
-  console.log(`✓ Health check: http://localhost:${PORT}/health`);
+  console.log(`✓ Сервер запущен: http://localhost:${PORT}`);
+  console.log(`✓ Запустите Whisper сервис: python backend/whisper_service.py`);
 });
 
 module.exports = app;

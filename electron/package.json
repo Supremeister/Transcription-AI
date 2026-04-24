@@ -1,0 +1,66 @@
+{
+  "name": "transcriptor",
+  "version": "1.0.0",
+  "description": "Локальный транскрибатор на Faster-Whisper",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "pack": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.transcriptor.app",
+    "productName": "Транскрибатор",
+    "directories": {
+      "output": "../dist-exe"
+    },
+    "files": [
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/src/",
+        "to": "backend/",
+        "filter": ["**/*", "!**/*.test.js"]
+      },
+      {
+        "from": "../backend/node_modules/",
+        "to": "backend/node_modules/"
+      },
+      {
+        "from": "../backend/package.json",
+        "to": "backend/package.json"
+      },
+      {
+        "from": "../frontend/dist/",
+        "to": "frontend/"
+      },
+      {
+        "from": "resources/node.exe",
+        "to": "node.exe"
+      },
+      {
+        "from": "../backend/whisper_service_dist/whisper_service.exe",
+        "to": "whisper_service.exe"
+      }
+    ],
+    "win": {
+      "target": "portable"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.0.0",
+    "form-data": "^4.0.0",
+    "helmet": "^7.0.0",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}

@@ -15,3 +15,11 @@ env/
 out/
 .vercel/
 .cache/
+
+# Build artifacts (тяжёлые файлы)
+dist-exe/
+whisper_service_dist/
+build_tmp/
+
+# Frontend build (генерируется npm run build)
+frontend/dist/
