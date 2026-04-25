@@ -14,6 +14,7 @@ function App() {
   const [language, setLanguage] = useState('ru');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
 
   // AI состояние
   const [ollamaReady, setOllamaReady] = useState(false);
@@ -105,8 +106,14 @@ function App() {
     setTranscribing(true);
     setError('');
     setTranscript('');
+    setElapsed(0);
     setStatus('Загружаем файл...');
     setAiResults({ correct: null, tasks: null, keypoints: null });
+
+    const startTime = Date.now();
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
 
     try {
       const formData = new FormData();
@@ -114,7 +121,7 @@ function App() {
       formData.append('language', language);
       if (apiKey) { formData.append('apiKey', apiKey); formData.append('apiEndpoint', apiEndpoint); }
 
-      setStatus('Обрабатываем... (это может занять 10–30 секунд)');
+      setStatus('Транскрибируем...');
 
       const response = await fetch(`${BACKEND}/api/transcribe`, {
         method: 'POST',
@@ -124,7 +131,11 @@ function App() {
       const data = await response.json();
 
       if (data.success) {
-        setTranscript(data.transcript);
+        if (!data.transcript?.trim()) {
+          setError('Транскрипция пуста — речь не найдена в файле. Проверьте аудио или смените язык.');
+        } else {
+          setTranscript(data.transcript);
+        }
         setStatus('');
       } else {
         setError(data.error || 'Ошибка транскрибации');
@@ -134,7 +145,9 @@ function App() {
       setError(`Ошибка соединения: ${err.message}`);
       setStatus('');
     } finally {
+      clearInterval(timer);
       setTranscribing(false);
+      setElapsed(0);
     }
   };
 
@@ -370,8 +383,8 @@ function App() {
           </button>
 
           {status && (
-            <div className="mt-4 text-sm rounded-lg p-3 animate-pulse" style={{ color: '#0c3b26', background: '#eaf3ee', border: '1px solid #b6d5c4' }}>
-              {status}
+            <div className="mt-4 text-sm rounded-lg p-3" style={{ color: '#0c3b26', background: '#eaf3ee', border: '1px solid #b6d5c4' }}>
+              {status}{elapsed > 0 ? ` (${elapsed} сек)` : ''}
             </div>
           )}
 

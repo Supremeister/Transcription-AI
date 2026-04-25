@@ -15,6 +15,19 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# Добавляем путь к CUDA DLL (nvidia-cublas-cu12)
+# В замороженном exe __file__ — это сам exe, DLLs лежат в sys._MEIPASS
+if getattr(sys, 'frozen', False):
+    _base = sys._MEIPASS
+else:
+    _base = os.path.dirname(os.path.abspath(__file__))
+_cublas_bin = os.path.join(_base, 'nvidia', 'cublas', 'bin')
+if os.path.isdir(_cublas_bin):
+    os.add_dll_directory(_cublas_bin)
+    print(f"✅ CUDA DLL path: {_cublas_bin}", flush=True)
+else:
+    print(f"⚠️ CUDA DLL path не найден: {_cublas_bin}", flush=True)
+
 # Загружаем модель один раз при старте
 print("⏳ Загружаем Whisper модель...", flush=True)
 MODEL = None
@@ -23,10 +36,20 @@ compute_type = "int8"
 try:
     from faster_whisper import WhisperModel
     MODEL = WhisperModel("small", device="cuda", compute_type="float16")
-    print("✅ Модель загружена. Устройство: CUDA", flush=True)
+    device = "cuda"
+    compute_type = "float16"
+    print("✅ Модель загружена. Устройство: CUDA (float16)", flush=True)
 except Exception as e:
-    print(f"❌ Ошибка загрузки модели: {e}", flush=True)
-    MODEL = None
+    print(f"⚠️ CUDA недоступна: {e}", flush=True)
+    try:
+        from faster_whisper import WhisperModel
+        MODEL = WhisperModel("small", device="cpu", compute_type="int8")
+        device = "cpu"
+        compute_type = "int8"
+        print("✅ Модель загружена. Устройство: CPU", flush=True)
+    except Exception as e2:
+        print(f"❌ Ошибка загрузки модели: {e2}", flush=True)
+        MODEL = None
 
 
 @app.route("/health", methods=["GET"])
@@ -56,8 +79,18 @@ def transcribe():
         tmp_path = tmp.name
 
     try:
-        segments, info = MODEL.transcribe(tmp_path, language=language, beam_size=1)
+        print(f"⏳ Транскрибируем: {tmp_path} (lang={language})", flush=True)
+        segments, info = MODEL.transcribe(tmp_path, language=language, beam_size=1, vad_filter=True, condition_on_previous_text=False)
         transcript = " ".join(seg.text.strip() for seg in segments)
+        print(f"✅ VAD транскрипция: {len(transcript)} символов", flush=True)
+
+        # Если VAD отфильтровал весь звук — пробуем без VAD
+        if not transcript.strip():
+            print("⚠️ VAD дал пустой результат, пробуем без VAD...", flush=True)
+            segments2, _ = MODEL.transcribe(tmp_path, language=language, beam_size=1, vad_filter=False, condition_on_previous_text=False)
+            transcript = " ".join(seg.text.strip() for seg in segments2)
+            print(f"✅ Без VAD: {len(transcript)} символов", flush=True)
+
         return jsonify({"success": True, "transcript": transcript, "language": language})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
