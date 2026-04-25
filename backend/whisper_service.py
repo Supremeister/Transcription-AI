@@ -14,20 +14,13 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# В замороженном exe отключаем CUDA через env — ctranslate2 лениво грузит
-# cublas64_12.dll только при первом инференсе, и падает если нет cudart64_12.dll.
-# Без этого: первый клик → CUDA ошибка, второй клик → CPU зависает (плохое состояние).
+# В frozen exe ctranslate2/__init__.py сам добавляет свою папку в os.add_dll_directory
+# и preload-ит DLL через ctypes.CDLL. Нам только нужно добавить _MEIPASS в PATH
+# чтобы .pyd файлы находились корректно.
 if getattr(sys, 'frozen', False):
-    os.environ['CUDA_VISIBLE_DEVICES'] = ''
-    os.environ['CT2_VERBOSE'] = '0'
-    print("ℹ️ Frozen exe: принудительный CPU режим (CUDA отключена)", flush=True)
-else:
-    # В Python-режиме пробуем CUDA через os.add_dll_directory
-    _base = os.path.dirname(os.path.abspath(__file__))
-    _cublas_bin = os.path.join(_base, 'nvidia', 'cublas', 'bin')
-    if os.path.isdir(_cublas_bin):
-        os.add_dll_directory(_cublas_bin)
-        print(f"✅ CUDA DLL path: {_cublas_bin}", flush=True)
+    # Добавляем корень _MEIPASS для .pyd и прочих бинарей
+    os.add_dll_directory(sys._MEIPASS)
+    print(f"ℹ️ Frozen exe. DLL dir: {sys._MEIPASS}", flush=True)
 
 # Загружаем модель один раз при старте
 print("⏳ Загружаем Whisper модель...", flush=True)
@@ -35,22 +28,21 @@ MODEL = None
 device = "cpu"
 compute_type = "int8"
 
-if not getattr(sys, 'frozen', False):
-    # Python-режим: пробуем CUDA
-    try:
-        from faster_whisper import WhisperModel
-        MODEL = WhisperModel("small", device="cuda", compute_type="float16")
-        device = "cuda"
-        compute_type = "float16"
-        print("✅ Модель загружена. Устройство: CUDA (float16)", flush=True)
-    except Exception as e:
-        print(f"⚠️ CUDA недоступна: {e}", flush=True)
+# Пробуем CUDA (работает и в Python и в frozen exe)
+try:
+    from faster_whisper import WhisperModel
+    MODEL = WhisperModel("medium", device="cuda", compute_type="float16")
+    device = "cuda"
+    compute_type = "float16"
+    print("✅ Модель загружена. Устройство: CUDA (float16)", flush=True)
+except Exception as e:
+    print(f"⚠️ CUDA недоступна: {e}", flush=True)
 
 if MODEL is None:
-    # CPU режим (всегда для exe, fallback для Python)
+    # CPU fallback
     try:
         from faster_whisper import WhisperModel
-        MODEL = WhisperModel("small", device="cpu", compute_type="int8")
+        MODEL = WhisperModel("medium", device="cpu", compute_type="int8")
         device = "cpu"
         compute_type = "int8"
         print("✅ Модель загружена. Устройство: CPU (int8)", flush=True)
@@ -60,7 +52,7 @@ if MODEL is None:
 
 
 def _do_transcribe(tmp_path, language, vad_filter):
-    """Выполняет транскрипцию в отдельном потоке для поддержки таймаута."""
+    """Транскрипция в отдельном потоке с таймаутом 10 минут."""
     result = [None]
     error = [None]
 
@@ -76,10 +68,10 @@ def _do_transcribe(tmp_path, language, vad_filter):
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
-    t.join(timeout=300)  # максимум 5 минут на файл
+    t.join(timeout=600)  # 10 минут максимум
 
     if t.is_alive():
-        return None, "Таймаут транскрипции (>5 мин). Попробуйте файл меньшего размера."
+        return None, "Таймаут транскрипции (>10 мин). Попробуйте файл меньшего размера."
     if error[0]:
         return None, error[0]
     return result[0], None
@@ -89,7 +81,7 @@ def _do_transcribe(tmp_path, language, vad_filter):
 def health():
     return jsonify({
         "status": "ok" if MODEL else "error",
-        "model": "small",
+        "model": "medium",
         "device": device if MODEL else "unknown"
     })
 
