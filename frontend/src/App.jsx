@@ -15,6 +15,8 @@ function App() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [lastElapsed, setLastElapsed] = useState(null); // итоговое время последней транскрипции
+  const [whisperDevice, setWhisperDevice] = useState(null); // 'cuda' | 'cpu'
 
   // AI состояние
   const [ollamaReady, setOllamaReady] = useState(false);
@@ -70,6 +72,7 @@ function App() {
         const data = await res.json();
         if (data.status === 'ok') {
           setWhisperReady(true);
+          setWhisperDevice(data.whisper?.device || null);
           return;
         }
       } catch {}
@@ -129,6 +132,9 @@ function App() {
       });
 
       const data = await response.json();
+
+      const finalElapsed = Math.floor((Date.now() - startTime) / 1000);
+      setLastElapsed(finalElapsed);
 
       if (data.success) {
         if (!data.transcript?.trim()) {
@@ -251,6 +257,11 @@ function App() {
               <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>● Сервер готов</span>
             ) : (
               <span className="text-red-400 text-xs font-medium">● Сервер недоступен</span>
+            )}
+            {backendReady && whisperDevice && (
+              <span className="text-xs font-medium" style={{ color: whisperDevice === 'cuda' ? '#6ee7a8' : 'rgba(255,255,255,0.6)' }}>
+                ● {whisperDevice === 'cuda' ? 'GPU (CUDA)' : 'CPU'} · medium
+              </span>
             )}
             {backendReady && (
               ollamaReady
@@ -396,6 +407,12 @@ function App() {
         </div>
 
         {/* Результат транскрипции */}
+        {lastElapsed !== null && !transcribing && (
+          <div className="mb-3 text-xs text-center" style={{ color: '#6b7280' }}>
+            ⏱ Транскрибировано за {lastElapsed} сек
+            {whisperDevice && <span> · {whisperDevice === 'cuda' ? '🟢 GPU (CUDA)' : '🟡 CPU'}</span>}
+          </div>
+        )}
         {transcript && (
           <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
             <h2 className="text-xl font-bold mb-4 text-gray-800">📄 Транскрипция</h2>
