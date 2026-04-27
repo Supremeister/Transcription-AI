@@ -3,6 +3,8 @@ import './App.css';
 
 const BACKEND = 'http://localhost:3000';
 
+const AI_ANALYSIS_ENABLED = true;
+
 function App() {
   const [backendReady, setBackendReady] = useState(false);
   const [whisperReady, setWhisperReady] = useState(false);
@@ -11,6 +13,7 @@ function App() {
   const [transcribing, setTranscribing] = useState(false);
   const [status, setStatus] = useState('');
   const [transcript, setTranscript] = useState('');
+  const [segments, setSegments] = useState([]); // speaker diarization blocks
   const [language, setLanguage] = useState('ru');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -23,6 +26,7 @@ function App() {
   const [analyzing, setAnalyzing] = useState(null); // 'correct' | 'tasks' | 'keypoints' | null
   const [aiResults, setAiResults] = useState({ correct: null, tasks: null, keypoints: null });
   const [aiError, setAiError] = useState('');
+  const [analyzeElapsed, setAnalyzeElapsed] = useState(0);
   const [setupInProgress, setSetupInProgress] = useState(false);
   const [setupProgress, setSetupProgress] = useState({ msg: '', pct: 0 });
   const [showAiOnboarding, setShowAiOnboarding] = useState(
@@ -40,6 +44,78 @@ function App() {
     localStorage.setItem('apiEndpoint', apiEndpoint);
     localStorage.setItem('apiModel', apiModel);
     setShowApiSettings(false);
+  };
+
+  // Диаризация — настройки
+  const [diarizeStatus, setDiarizeStatus] = useState(null); // {python, pyannote, hfToken, ready}
+  const [hfTokenDraft, setHfTokenDraft] = useState('');
+  const [hfTokenSaved, setHfTokenSaved] = useState(false);
+  const [diarizeInstalling, setDiarizeInstalling] = useState(false);
+  const [diarizeInstallMsg, setDiarizeInstallMsg] = useState('');
+  const [diarizeInstallPct, setDiarizeInstallPct] = useState(0);
+
+  const checkDiarizeStatus = async () => {
+    try {
+      const res = await fetch(`${BACKEND}/api/diarize/status`);
+      const data = await res.json();
+      setDiarizeStatus(data);
+    } catch {}
+  };
+
+  const saveHfToken = async () => {
+    if (!hfTokenDraft.startsWith('hf_')) return;
+    try {
+      await fetch(`${BACKEND}/api/diarize/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: hfTokenDraft })
+      });
+      setHfTokenSaved(true);
+      setTimeout(() => setHfTokenSaved(false), 2000);
+      checkDiarizeStatus();
+    } catch {}
+  };
+
+  const installDiarize = async () => {
+    setDiarizeInstalling(true);
+    setDiarizeInstallMsg('Запускаем установку...');
+    setDiarizeInstallPct(5);
+    try {
+      const res = await fetch(`${BACKEND}/api/diarize/install`, { method: 'POST' });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value);
+        const lines = text.split('\n').filter(l => l.startsWith('data: '));
+        for (const line of lines) {
+          const data = JSON.parse(line.slice(6));
+          if (data.msg) { setDiarizeInstallMsg(data.msg); setDiarizeInstallPct(data.pct || 0); }
+          if (data.done) { checkDiarizeStatus(); }
+        }
+      }
+    } catch (e) {
+      setDiarizeInstallMsg('Ошибка: ' + e.message);
+    } finally {
+      setDiarizeInstalling(false);
+    }
+  };
+
+  // Профиль пользователя
+  const [userProfile, setUserProfile] = useState(() => localStorage.getItem('userProfile') || '');
+  const [showProfile, setShowProfile] = useState(false);
+  const [profileDraft, setProfileDraft] = useState('');
+
+  const openProfile = () => { setProfileDraft(userProfile); setShowProfile(true); };
+  const saveProfile = () => { localStorage.setItem('userProfile', profileDraft); setUserProfile(profileDraft); setShowProfile(false); };
+
+  // История сессий
+  const getHistory = () => { try { return JSON.parse(localStorage.getItem('analysisHistory') || '[]'); } catch { return []; } };
+  const addToHistory = (filename, summary) => {
+    const history = getHistory();
+    history.unshift({ date: new Date().toISOString(), filename: filename || 'unknown', summary: summary.slice(0, 500) });
+    localStorage.setItem('analysisHistory', JSON.stringify(history.slice(0, 10)));
   };
 
   const useApiMode = !!apiKey;
@@ -94,6 +170,7 @@ function App() {
     setAudioFile(file);
     setError('');
     setTranscript('');
+    setSegments([]);
     setStatus('');
     setAiResults({ correct: null, tasks: null, keypoints: null });
   };
@@ -104,6 +181,42 @@ function App() {
     if (file) handleFileChange({ target: { files: [file] } });
   };
 
+  useEffect(() => {
+    if (!analyzing) { setAnalyzeElapsed(0); return; }
+    setAnalyzeElapsed(0);
+    const t = setInterval(() => setAnalyzeElapsed(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [analyzing]);
+
+  const runAutoAnalysis = async (text) => {
+    setAnalyzing('full');
+    setAiError('');
+    const history = getHistory().slice(0, 3);
+    try {
+      const response = await fetch(`${BACKEND}/api/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: text,
+          action: 'full',
+          userContext: userProfile || undefined,
+          history: history.length ? history : undefined,
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setAiResults(prev => ({ ...prev, full: data.result }));
+        addToHistory(audioFile?.name, data.result);
+      } else {
+        setAiError(data.error || 'Ошибка AI анализа');
+      }
+    } catch (err) {
+      setAiError(`Ошибка AI: ${err.message}`);
+    } finally {
+      setAnalyzing(null);
+    }
+  };
+
   const handleTranscribe = async () => {
     if (!audioFile) return;
     setTranscribing(true);
@@ -111,7 +224,7 @@ function App() {
     setTranscript('');
     setElapsed(0);
     setStatus('Загружаем файл...');
-    setAiResults({ correct: null, tasks: null, keypoints: null });
+    setAiResults({ correct: null, tasks: null, keypoints: null, full: null });
 
     const startTime = Date.now();
     const timer = setInterval(() => {
@@ -141,6 +254,14 @@ function App() {
           setError('Транскрипция пуста — речь не найдена в файле. Проверьте аудио или смените язык.');
         } else {
           setTranscript(data.transcript);
+          setSegments(data.segments || []);
+          if (AI_ANALYSIS_ENABLED) {
+            setStatus('Анализируем...');
+            const analysisText = data.segments?.length > 0
+              ? data.segments.map(s => `${s.speaker}:\n${s.text}`).join('\n\n')
+              : data.transcript;
+            await runAutoAnalysis(analysisText);
+          }
         }
         setStatus('');
       } else {
@@ -160,19 +281,25 @@ function App() {
   const handleAnalyze = async (action) => {
     setAnalyzing(action);
     setAiError('');
+    const history = action === 'full' ? getHistory().slice(0, 3) : undefined;
     try {
       const response = await fetch(`${BACKEND}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript, action, apiKey: apiKey || undefined, apiEndpoint: apiEndpoint || undefined, apiModel: apiModel || undefined })
+        body: JSON.stringify({
+          transcript,
+          action,
+          apiKey: apiKey || undefined,
+          apiEndpoint: apiEndpoint || undefined,
+          apiModel: apiModel || undefined,
+          userContext: userProfile || undefined,
+          history: history?.length ? history : undefined,
+        })
       });
       const data = await response.json();
       if (data.success) {
         setAiResults(prev => ({ ...prev, [action]: data.result }));
-      } else if (data.error === 'ollama_not_running') {
-        setAiError('Ollama не запущен. Установите Ollama и запустите: ollama pull qwen2.5:3b');
-      } else if (data.error === 'model_not_found') {
-        setAiError('Модель не найдена. Выполните: ollama pull qwen2.5:3b');
+        if (action === 'full') addToHistory(audioFile?.name, data.result);
       } else {
         setAiError(data.error || 'Ошибка анализа');
       }
@@ -188,6 +315,21 @@ function App() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const handleSave = (content, filename) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const getFilename = (suffix) => {
+    const base = audioFile ? audioFile.name.replace(/\.[^.]+$/, '') : 'transcript';
+    return `${base}_${suffix}.txt`;
   };
 
   const formatSize = (bytes) => {
@@ -250,7 +392,7 @@ function App() {
             <h1 className="text-4xl font-bold tracking-tight text-white">Транскрибатор</h1>
           </div>
           <p className="mt-1 text-sm tracking-widest uppercase" style={{ color: 'rgba(255,255,255,0.5)' }}>Speech to Text · AI Analysis</p>
-          <div className="mt-3 flex justify-center gap-4">
+          <div className="mt-3 flex justify-center items-center gap-4 flex-wrap">
             {loading ? (
               <span className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>Проверяем сервер...</span>
             ) : backendReady ? (
@@ -264,10 +406,22 @@ function App() {
               </span>
             )}
             {backendReady && (
-              ollamaReady
-                ? <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>● AI готов</span>
-                : <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>● AI не настроен</span>
+              <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>● AI готов</span>
             )}
+            <button
+              onClick={openProfile}
+              className="text-xs px-3 py-1 rounded-full font-medium transition"
+              style={{ background: userProfile ? 'rgba(110,231,168,0.2)' : 'rgba(255,255,255,0.12)', color: userProfile ? '#6ee7a8' : 'rgba(255,255,255,0.6)', border: '1px solid', borderColor: userProfile ? 'rgba(110,231,168,0.4)' : 'rgba(255,255,255,0.2)' }}
+            >
+              👤 {userProfile ? 'Профиль' : 'Добавить профиль'}
+            </button>
+            <button
+              onClick={() => { setShowApiSettings(true); checkDiarizeStatus(); }}
+              className="text-xs px-3 py-1 rounded-full font-medium transition"
+              style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.2)' }}
+            >
+              ⚙️ Настройки
+            </button>
           </div>
         </div>
       </header>
@@ -281,74 +435,47 @@ function App() {
           </div>
         )}
 
-        {/* Онбординг AI */}
-        {!loading && !ollamaReady && showAiOnboarding && (
-          <div className="rounded-xl p-6 mb-6 shadow-sm border" style={{ background: '#eaf3ee', borderColor: '#b6d5c4' }}>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <h3 className="text-lg font-bold mb-1" style={{ color: '#0c3b26' }}>🤖 Хотите AI-анализ транскрипций?</h3>
-                <p className="text-sm mb-4" style={{ color: '#1a5c3a' }}>
-                  Установите Ollama — и сможете исправлять текст, вытаскивать задачи и ключевые мысли прямо в приложении. Работает полностью локально, ~2 ГБ.
-                </p>
-                {setupInProgress ? (
-                  <div>
-                    <p className="text-sm mb-2" style={{ color: '#0c3b26' }}>{setupProgress.msg}</p>
-                    <div className="w-full rounded-full h-3 mb-1" style={{ background: '#b6d5c4' }}>
-                      <div
-                        className="h-3 rounded-full transition-all duration-300"
-                        style={{ width: `${setupProgress.pct || 0}%`, background: '#0c3b26' }}
-                      />
-                    </div>
-                    <p className="text-xs" style={{ color: '#3a7d58' }}>Не закрывайте приложение...</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-3">
-                    {setupProgress.error && (
-                      <p className="w-full text-red-700 text-sm mb-1">{setupProgress.msg}</p>
-                    )}
-                    <button
-                      onClick={handleSetupAI}
-                      className="text-white font-semibold py-2 px-5 rounded-lg transition text-sm"
-                      style={{ background: '#0c3b26' }}
-                      onMouseOver={e => e.currentTarget.style.background='#0a2e1e'}
-                      onMouseOut={e => e.currentTarget.style.background='#0c3b26'}
-                    >
-                      Установить AI
-                    </button>
-                    <button
-                      onClick={() => {
-                        localStorage.setItem('aiOnboardingDismissed', '1');
-                        setShowAiOnboarding(false);
-                      }}
-                      className="text-sm underline"
-                      style={{ color: '#1a5c3a' }}
-                    >
-                      Пропустить
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
           <h2 className="text-xl font-bold mb-6 text-gray-800">Загрузить аудио</h2>
 
           {/* Язык */}
           <div className="mb-5">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Язык</label>
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="ru">🇷🇺 Русский</option>
-              <option value="en">🇬🇧 English</option>
-              <option value="es">🇪🇸 Español</option>
-              <option value="fr">🇫🇷 Français</option>
-              <option value="de">🇩🇪 Deutsch</option>
-            </select>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Язык аудио</label>
+            <div className="flex gap-2">
+              {[
+                { value: 'ru', label: 'Русский', flag: (
+                  <svg width="20" height="14" viewBox="0 0 20 14" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="20" height="14" fill="#fff"/>
+                    <rect y="4.67" width="20" height="4.67" fill="#0039A6"/>
+                    <rect y="9.33" width="20" height="4.67" fill="#D52B1E"/>
+                  </svg>
+                )},
+                { value: 'en', label: 'English', flag: (
+                  <svg width="20" height="14" viewBox="0 0 20 14" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="20" height="14" fill="#012169"/>
+                    <path d="M0,0 L20,14 M20,0 L0,14" stroke="#fff" strokeWidth="2.5"/>
+                    <path d="M0,0 L20,14 M20,0 L0,14" stroke="#C8102E" strokeWidth="1.5"/>
+                    <path d="M10,0 V14 M0,7 H20" stroke="#fff" strokeWidth="4"/>
+                    <path d="M10,0 V14 M0,7 H20" stroke="#C8102E" strokeWidth="2.5"/>
+                  </svg>
+                )},
+              ].map(({ value, label, flag }) => (
+                <button
+                  key={value}
+                  onClick={() => setLanguage(value)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border font-medium text-sm transition"
+                  style={{
+                    background: language === value ? '#0c3b26' : '#fff',
+                    color: language === value ? '#fff' : '#374151',
+                    borderColor: language === value ? '#0c3b26' : '#d1d5db',
+                  }}
+                >
+                  <span className="rounded-sm overflow-hidden flex-shrink-0">{flag}</span>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Загрузка файла */}
@@ -415,20 +542,64 @@ function App() {
         )}
         {transcript && (
           <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
-            <h2 className="text-xl font-bold mb-4 text-gray-800">📄 Транскрипция</h2>
-            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-              <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">{transcript}</p>
-            </div>
-            <div className="mt-4 flex gap-3">
+            <h2 className="text-xl font-bold mb-4 text-gray-800">
+              📄 Транскрипция
+              {segments.length > 0 && (
+                <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: '#eaf3ee', color: '#0c3b26' }}>
+                  👥 {[...new Set(segments.map(s => s.speaker))].length} спикера
+                </span>
+              )}
+            </h2>
+
+            {segments.length > 0 ? (
+              <div className="space-y-3">
+                {segments.map((seg, i) => {
+                  const isFirst = seg.speaker === [...new Set(segments.map(s => s.speaker))][0];
+                  return (
+                    <div key={i} className={`rounded-lg p-3 border ${isFirst ? 'border-blue-200 bg-blue-50' : 'border-orange-200 bg-orange-50'}`}>
+                      <div className={`text-xs font-semibold mb-1 ${isFirst ? 'text-blue-700' : 'text-orange-700'}`}>
+                        {seg.speaker}
+                      </div>
+                      <p className={`text-sm leading-relaxed ${isFirst ? 'text-blue-900' : 'text-orange-900'}`}>
+                        {seg.text}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">{transcript}</p>
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap gap-2">
               <button
-                onClick={() => handleCopy(transcript)}
+                onClick={() => {
+                  const text = segments.length > 0
+                    ? segments.map(s => `${s.speaker}:\n${s.text}`).join('\n\n')
+                    : transcript;
+                  handleCopy(text);
+                }}
                 className="text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
                 style={{ background: '#0c3b26' }}
               >
                 {copied ? '✅ Скопировано!' : '📋 Копировать'}
               </button>
               <button
-                onClick={() => { setTranscript(''); setAudioFile(null); setAiResults({ correct: null, tasks: null, keypoints: null }); }}
+                onClick={() => {
+                  const text = segments.length > 0
+                    ? segments.map(s => `${s.speaker}:\n${s.text}`).join('\n\n')
+                    : transcript;
+                  handleSave(`=== ТРАНСКРИПЦИЯ ===\n\n${text}${aiResults.full ? `\n\n=== AI АНАЛИЗ ===\n\n${aiResults.full}` : ''}`, getFilename('всё'));
+                }}
+                className="text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
+                style={{ background: '#1a5c3a' }}
+              >
+                💾 Сохранить
+              </button>
+              <button
+                onClick={() => { setTranscript(''); setSegments([]); setAudioFile(null); setAiResults({ correct: null, tasks: null, keypoints: null, full: null }); setLastElapsed(null); const inp = document.getElementById('audioInput'); if (inp) inp.value = ''; }}
                 className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-lg transition text-sm"
               >
                 Очистить
@@ -438,148 +609,162 @@ function App() {
         )}
 
         {/* AI Анализ */}
-        {transcript && (
+        {AI_ANALYSIS_ENABLED && transcript && (
           <div className="bg-white rounded-xl shadow-lg p-8">
-            <h2 className="text-xl font-bold mb-2 text-gray-800">🤖 AI Анализ</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-800">🤖 AI Анализ</h2>
+              <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: '#eaf3ee', color: '#0c3b26' }}>
+                Llama 3.1 · Groq
+              </span>
+            </div>
 
-            {!ollamaReady ? (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-                <p className="font-semibold mb-2">AI не настроен</p>
-                {setupInProgress ? (
-                  <div>
-                    <p className="mb-2 text-sm">{setupProgress.msg}</p>
-                    <div className="w-full bg-amber-200 rounded-full h-3">
-                      <div
-                        className="bg-amber-600 h-3 rounded-full transition-all duration-300"
-                        style={{ width: `${setupProgress.pct || 0}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-amber-600 mt-1">Не закрывайте приложение...</p>
-                  </div>
-                ) : (
+            {/* Кнопка анализа */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button
+                onClick={() => runAutoAnalysis(transcript)}
+                disabled={!!analyzing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50"
+                style={{ background: '#0c3b26', color: '#fff' }}
+              >
+                {analyzing === 'full' ? (
                   <>
-                    {setupProgress.error && <p className="mb-2 text-red-700 text-sm">{setupProgress.msg}</p>}
-                    <button
-                      onClick={handleSetupAI}
-                      className="text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
-                      style={{ background: '#0c3b26' }}
-                    >
-                      Установить AI одной кнопкой
-                    </button>
-                    <p className="text-xs text-amber-600 mt-2">Скачает Ollama + модель ~2 ГБ</p>
-                  </>
-                )}
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-gray-500 text-sm">Выберите что нужно сделать с транскриптом:</p>
-                  <button
-                    onClick={() => setShowApiSettings(v => !v)}
-                    className="text-xs px-3 py-1 rounded-lg border transition"
-                    style={{ borderColor: useApiMode ? '#0c3b26' : '#d1d5db', color: useApiMode ? '#0c3b26' : '#6b7280', background: useApiMode ? '#eaf3ee' : 'white' }}
-                    title="Настройки API"
-                  >
-                    {useApiMode ? '🔑 API включён' : '⚙️ API ключ'}
-                  </button>
-                </div>
-
-                {showApiSettings && (
-                  <div className="mb-4 p-4 rounded-lg border text-sm" style={{ background: '#f8faf9', borderColor: '#b6d5c4' }}>
-                    <p className="font-semibold mb-3" style={{ color: '#0c3b26' }}>Внешний AI (быстро, без нагрева)</p>
-                    <div className="space-y-2">
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">API ключ (OpenAI, Groq, Together...)</label>
-                        <input
-                          type="password"
-                          value={apiKey}
-                          onChange={e => setApiKey(e.target.value)}
-                          placeholder="sk-..."
-                          className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-green-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Endpoint</label>
-                        <input
-                          type="text"
-                          value={apiEndpoint}
-                          onChange={e => setApiEndpoint(e.target.value)}
-                          className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-green-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Модель</label>
-                        <input
-                          type="text"
-                          value={apiModel}
-                          onChange={e => setApiModel(e.target.value)}
-                          className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-green-500"
-                        />
-                      </div>
-                      <div className="flex gap-2 pt-1">
-                        <button onClick={saveApiSettings} className="text-white text-xs font-semibold px-4 py-1.5 rounded-lg" style={{ background: '#0c3b26' }}>Сохранить</button>
-                        <button onClick={() => { setApiKey(''); localStorage.removeItem('apiKey'); }} className="text-xs px-4 py-1.5 rounded-lg border border-gray-300 text-gray-600">Очистить</button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap gap-3 mb-4">
-                  {AI_ACTIONS.map(({ key, label, icon }) => (
-                    <button
-                      key={key}
-                      onClick={() => handleAnalyze(key)}
-                      disabled={!!analyzing}
-                      className="flex items-center gap-2 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
-                      style={{ background: '#0c3b26' }}
-                    >
-                      {analyzing === key ? '⏳' : icon} {label}
-                    </button>
-                  ))}
-                </div>
-
-                {analyzing && (
-                  <div className="flex items-center gap-3 mb-4 px-4 py-3 rounded-lg" style={{ background: '#eaf3ee' }}>
-                    <svg className="animate-spin h-4 w-4 flex-shrink-0" style={{ color: '#0c3b26' }} fill="none" viewBox="0 0 24 24">
+                    <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                     </svg>
-                    <span className="text-sm" style={{ color: '#0c3b26' }}>
-                      {AI_ACTIONS.find(a => a.key === analyzing)?.label}... {useApiMode ? 'запрос к API' : 'Ollama думает'}
-                    </span>
-                  </div>
-                )}
+                    Анализ... {analyzeElapsed > 0 && `(${analyzeElapsed}с)`}
+                  </>
+                ) : '📊 Повторить анализ'}
+              </button>
+            </div>
 
-                {aiError && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-                    <p className="text-red-800 text-sm">{aiError}</p>
-                  </div>
-                )}
+            {aiError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <p className="text-red-800 text-sm">⚠️ {aiError}</p>
+              </div>
+            )}
 
-                {AI_ACTIONS.map(({ key, label, icon }) =>
-                  aiResults[key] ? (
-                    <div key={key} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="px-4 py-2 flex justify-between items-center" style={{ background: '#eaf3ee' }}>
-                        <span className="font-semibold text-sm" style={{ color: '#0c3b26' }}>{icon} {label}</span>
-                        <button
-                          onClick={() => handleCopy(aiResults[key])}
-                          className="text-xs"
-                          style={{ color: '#1a5c3a' }}
-                        >
-                          📋 Копировать
-                        </button>
-                      </div>
-                      <div className="bg-gray-50 px-4 py-3">
-                        <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">{aiResults[key]}</p>
-                      </div>
-                    </div>
-                  ) : null
-                )}
-              </>
+
+            {aiResults.full && (
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-2 flex justify-between items-center" style={{ background: '#eaf3ee' }}>
+                  <span className="font-semibold text-sm" style={{ color: '#0c3b26' }}>📊 Полный отчёт</span>
+                  <button onClick={() => handleCopy(aiResults.full)} className="text-xs" style={{ color: '#1a5c3a' }}>
+                    📋 Копировать
+                  </button>
+                </div>
+                <div className="bg-gray-50 px-4 py-3">
+                  <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">{aiResults.full}</p>
+                </div>
+              </div>
             )}
           </div>
         )}
       </main>
+
+      {/* Модал профиля */}
+      {showProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-bold text-gray-800">👤 Профиль пользователя</h3>
+              <button onClick={() => setShowProfile(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">Кто вы, чем занимаетесь, ваши принципы. Это подтягивается в каждый AI-анализ.</p>
+            <textarea
+              value={profileDraft}
+              onChange={(e) => setProfileDraft(e.target.value)}
+              rows={8}
+              className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none focus:outline-none focus:border-green-600"
+              placeholder="Пример: Я Михаил, брокер по недвижимости. Работаю над контрактингом и эксклюзивами. Принципы: чёткое разделение метрики/результата/плана/приёма, системное описание бизнес-процессов..."
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setShowProfile(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">Отмена</button>
+              <button onClick={saveProfile} className="px-4 py-2 text-sm text-white rounded-lg font-medium" style={{ background: '#0c3b26' }}>Сохранить</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Модал настроек / диаризация */}
+      {showApiSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-5">
+              <h3 className="text-lg font-bold text-gray-800">⚙️ Настройки</h3>
+              <button onClick={() => setShowApiSettings(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+            </div>
+
+            {/* Диаризация спикеров */}
+            <div className="mb-6">
+              <h4 className="font-semibold text-gray-700 mb-3">👥 Разделение по спикерам</h4>
+
+              {/* Статус */}
+              {diarizeStatus && (
+                <div className="mb-4 space-y-1.5 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span>{diarizeStatus.python ? '✅' : '❌'}</span>
+                    <span className="text-gray-600">Python: {diarizeStatus.python ? diarizeStatus.python.split('\\').pop() : 'не найден'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span>{diarizeStatus.pyannote ? '✅' : '❌'}</span>
+                    <span className="text-gray-600">pyannote.audio: {diarizeStatus.pyannote ? 'установлен' : 'не установлен'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span>{diarizeStatus.hfToken ? '✅' : '❌'}</span>
+                    <span className="text-gray-600">HuggingFace токен: {diarizeStatus.hfToken ? 'сохранён' : 'не задан'}</span>
+                  </div>
+                  {diarizeStatus.ready && (
+                    <div className="mt-2 text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: '#eaf3ee', color: '#0c3b26' }}>
+                      🎉 Диаризация готова к работе
+                    </div>
+                  )}
+                </div>
+              )}
+              {!diarizeStatus && (
+                <button onClick={checkDiarizeStatus} className="text-sm text-blue-600 underline mb-3">Проверить статус</button>
+              )}
+
+              {/* Установка pyannote */}
+              {diarizeStatus && !diarizeStatus.pyannote && diarizeStatus.python && (
+                <div>
+                  <button
+                    onClick={installDiarize}
+                    disabled={diarizeInstalling}
+                    className="w-full py-2 text-sm text-white rounded-lg font-medium disabled:opacity-50"
+                    style={{ background: '#1a5c3a' }}
+                  >
+                    {diarizeInstalling ? '⏳ Устанавливаем...' : '⬇️ Установить pyannote.audio'}
+                  </button>
+                  {diarizeInstalling && (
+                    <div className="mt-2">
+                      <div className="w-full bg-gray-200 rounded-full h-1.5 mb-1">
+                        <div className="h-1.5 rounded-full transition-all" style={{ width: `${diarizeInstallPct}%`, background: '#0c3b26' }} />
+                      </div>
+                      <p className="text-xs text-gray-500">{diarizeInstallMsg}</p>
+                    </div>
+                  )}
+                  {!diarizeInstalling && diarizeInstallMsg && (
+                    <p className="text-xs text-gray-500 mt-1">{diarizeInstallMsg}</p>
+                  )}
+                </div>
+              )}
+
+              {diarizeStatus && !diarizeStatus.python && (
+                <div className="text-xs text-orange-600 bg-orange-50 rounded-lg p-3">
+                  Python не найден. Установите <a href="https://python.org" target="_blank" rel="noreferrer" className="underline">Python 3.10+</a>, затем перезапустите приложение.
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end">
+              <button onClick={() => setShowApiSettings(false)} className="px-4 py-2 text-sm text-white rounded-lg font-medium" style={{ background: '#0c3b26' }}>
+                Закрыть
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer className="mt-12 py-5 text-white" style={{ background: '#0c3b26' }}>
         <div className="max-w-6xl mx-auto px-4 text-center text-sm">

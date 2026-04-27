@@ -2,6 +2,7 @@
 """
 Whisper микросервис - модель загружается один раз при старте.
 Принимает аудио файлы, возвращает транскрипцию.
+Поддерживает speaker diarization через pyannote.audio (если HF_TOKEN задан).
 """
 import sys
 import io
@@ -18,17 +19,29 @@ app = Flask(__name__)
 # и preload-ит DLL через ctypes.CDLL. Нам только нужно добавить _MEIPASS в PATH
 # чтобы .pyd файлы находились корректно.
 if getattr(sys, 'frozen', False):
+    import ctypes
+    import glob
     # Добавляем корень _MEIPASS для .pyd и прочих бинарей
     os.add_dll_directory(sys._MEIPASS)
+    # Явно добавляем ctranslate2/ папку и preload всех DLL
+    # (importlib.resources.files() в frozen exe работает неправильно)
+    ct2_dir = os.path.join(sys._MEIPASS, 'ctranslate2')
+    if os.path.exists(ct2_dir):
+        os.add_dll_directory(ct2_dir)
+        for dll in glob.glob(os.path.join(ct2_dir, '*.dll')):
+            try:
+                ctypes.CDLL(dll)
+                print(f"✅ Loaded DLL: {os.path.basename(dll)}", flush=True)
+            except Exception as e:
+                print(f"⚠️ Failed to load {os.path.basename(dll)}: {e}", flush=True)
     print(f"ℹ️ Frozen exe. DLL dir: {sys._MEIPASS}", flush=True)
 
-# Загружаем модель один раз при старте
+# ─── Загружаем Whisper ────────────────────────────────────────────────────────
 print("⏳ Загружаем Whisper модель...", flush=True)
 MODEL = None
 device = "cpu"
 compute_type = "int8"
 
-# Пробуем CUDA (работает и в Python и в frozen exe)
 try:
     from faster_whisper import WhisperModel
     MODEL = WhisperModel("medium", device="cuda", compute_type="float16")
@@ -39,7 +52,6 @@ except Exception as e:
     print(f"⚠️ CUDA недоступна: {e}", flush=True)
 
 if MODEL is None:
-    # CPU fallback
     try:
         from faster_whisper import WhisperModel
         MODEL = WhisperModel("medium", device="cpu", compute_type="int8")
@@ -50,19 +62,46 @@ if MODEL is None:
         print(f"❌ Ошибка загрузки модели: {e2}", flush=True)
         MODEL = None
 
+# ─── Загружаем pyannote (опционально) ────────────────────────────────────────
+DIARIZER = None
+HF_TOKEN = os.environ.get("HF_TOKEN")
+
+if HF_TOKEN and not getattr(sys, 'frozen', False):
+    try:
+        import torch
+        from pyannote.audio import Pipeline
+        print("⏳ Загружаем pyannote speaker diarization...", flush=True)
+        DIARIZER = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            use_auth_token=HF_TOKEN
+        )
+        # Запускаем на CPU чтобы не конфликтовать с Whisper по VRAM
+        DIARIZER = DIARIZER.to(torch.device("cpu"))
+        print("✅ Диаризация загружена (CPU)", flush=True)
+    except Exception as e:
+        print(f"⚠️ Диаризация недоступна: {e}", flush=True)
+        DIARIZER = None
+elif not HF_TOKEN:
+    print("ℹ️ HF_TOKEN не задан — диаризация отключена", flush=True)
+
+
+# ─── Транскрипция ─────────────────────────────────────────────────────────────
 
 def _do_transcribe(tmp_path, language, vad_filter):
-    """Транскрипция в отдельном потоке с таймаутом 10 минут."""
+    """Транскрипция в отдельном потоке. Возвращает список сегментов с таймстемпами."""
     result = [None]
     error = [None]
 
     def worker():
         try:
-            segments, _ = MODEL.transcribe(
+            segments_gen, _ = MODEL.transcribe(
                 tmp_path, language=language, beam_size=1,
                 vad_filter=vad_filter, condition_on_previous_text=False
             )
-            result[0] = " ".join(seg.text.strip() for seg in segments)
+            result[0] = [
+                {'start': s.start, 'end': s.end, 'text': s.text.strip()}
+                for s in segments_gen
+            ]
         except Exception as e:
             error[0] = str(e)
 
@@ -77,12 +116,57 @@ def _do_transcribe(tmp_path, language, vad_filter):
     return result[0], None
 
 
+def _assign_speakers(whisper_segs, diarization):
+    """Назначает спикера каждому whisper-сегменту по максимальному перекрытию."""
+    speaker_map = {}  # SPEAKER_00 → Собеседник 1, etc.
+    counter = [0]
+
+    def get_label(raw_speaker):
+        if raw_speaker not in speaker_map:
+            counter[0] += 1
+            speaker_map[raw_speaker] = f"Собеседник {counter[0]}"
+        return speaker_map[raw_speaker]
+
+    result = []
+    for seg in whisper_segs:
+        best_speaker = None
+        best_overlap = 0.0
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            overlap = min(seg['end'], turn.end) - max(seg['start'], turn.start)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = speaker
+        label = get_label(best_speaker) if best_speaker else "Собеседник 1"
+        result.append({**seg, 'speaker': label})
+    return result
+
+
+def _merge_consecutive(segments):
+    """Склеивает подряд идущие сегменты одного спикера в один блок."""
+    if not segments:
+        return []
+    merged = []
+    current = dict(segments[0])
+    for seg in segments[1:]:
+        if seg['speaker'] == current['speaker']:
+            current['text'] += ' ' + seg['text']
+            current['end'] = seg['end']
+        else:
+            merged.append(current)
+            current = dict(seg)
+    merged.append(current)
+    return merged
+
+
+# ─── Эндпоинты ───────────────────────────────────────────────────────────────
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
         "status": "ok" if MODEL else "error",
         "model": "medium",
-        "device": device if MODEL else "unknown"
+        "device": device if MODEL else "unknown",
+        "diarization": DIARIZER is not None
     })
 
 
@@ -105,21 +189,45 @@ def transcribe():
     try:
         print(f"⏳ Транскрибируем: {audio_file.filename} (lang={language})", flush=True)
 
-        transcript, err = _do_transcribe(tmp_path, language, vad_filter=True)
+        segments, err = _do_transcribe(tmp_path, language, vad_filter=True)
         if err:
             return jsonify({"success": False, "error": err}), 500
 
-        print(f"✅ VAD результат: {len(transcript)} символов", flush=True)
+        plain_text = " ".join(s['text'] for s in segments) if segments else ""
+        print(f"✅ VAD результат: {len(plain_text)} символов", flush=True)
 
         # Если VAD отфильтровал всё — retry без VAD
-        if not transcript.strip():
+        if not plain_text.strip():
             print("⚠️ VAD пустой результат, пробуем без VAD...", flush=True)
-            transcript, err = _do_transcribe(tmp_path, language, vad_filter=False)
+            segments, err = _do_transcribe(tmp_path, language, vad_filter=False)
             if err:
                 return jsonify({"success": False, "error": err}), 500
-            print(f"✅ Без VAD: {len(transcript)} символов", flush=True)
+            plain_text = " ".join(s['text'] for s in segments) if segments else ""
+            print(f"✅ Без VAD: {len(plain_text)} символов", flush=True)
 
-        return jsonify({"success": True, "transcript": transcript, "language": language})
+        # Диаризация (если доступна)
+        diarized_segments = None
+        if DIARIZER and segments:
+            try:
+                print("⏳ Диаризация...", flush=True)
+                diarization = DIARIZER(tmp_path)
+                raw = _assign_speakers(segments, diarization)
+                diarized_segments = _merge_consecutive(raw)
+                print(f"✅ Диаризация: {len(diarized_segments)} блоков", flush=True)
+            except Exception as e:
+                print(f"⚠️ Ошибка диаризации: {e}", flush=True)
+
+        response_data = {"success": True, "transcript": plain_text, "language": language}
+        if diarized_segments:
+            # Полная диаризация (только в dev/py режиме)
+            response_data["segments"] = diarized_segments
+            response_data["diarized"] = True
+        elif segments:
+            # Возвращаем сырые сегменты с таймстемпами — Node.js вызовет diarize.py
+            response_data["whisper_segments"] = segments
+
+        return jsonify(response_data)
+
     finally:
         try:
             os.unlink(tmp_path)

@@ -4,9 +4,56 @@ const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 const FormData = require('form-data');
+const { execFile } = require('child_process');
 
 const router = express.Router();
 const WHISPER_SERVICE = 'http://127.0.0.1:8001';
+
+// Читаем HF_TOKEN из .env рядом с этим файлом
+function getHfToken() {
+  try {
+    const envPath = path.join(__dirname, '../.env');
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+      for (const line of lines) {
+        const m = line.match(/^HF_TOKEN\s*=\s*(.+)$/);
+        if (m) return m[1].trim();
+      }
+    }
+  } catch(e) {}
+  return process.env.HF_TOKEN || null;
+}
+
+// Запускаем diarize.py через системный Python
+function runDiarize(audioPath, whisperSegments) {
+  return new Promise((resolve) => {
+    const hfToken = getHfToken();
+    if (!hfToken) { resolve([]); return; }
+
+    const pythonCandidates = [
+      'C:\\Users\\MSI\\AppData\\Local\\Python\\bin\\python.exe',
+      'python',
+      'python3',
+    ];
+    const python = pythonCandidates.find(p => {
+      try { require('fs').accessSync(p); return true; } catch { return p === 'python' || p === 'python3'; }
+    }) || 'python';
+
+    const scriptPath = path.join(__dirname, '../diarize.py');
+    const args = [scriptPath, audioPath, JSON.stringify(whisperSegments), hfToken];
+
+    console.log('⏳ Диаризация через diarize.py...');
+    execFile(python, args, { timeout: 5 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+      if (err) { console.error('⚠️ diarize.py ошибка:', err.message); resolve([]); return; }
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) { console.error('⚠️ diarize.py:', result.error); resolve([]); return; }
+        console.log(`✅ Диаризация: ${result.segments.length} блоков`);
+        resolve(result.segments);
+      } catch { resolve([]); }
+    });
+  });
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -49,6 +96,8 @@ router.post('/', upload.single('audio'), async (req, res) => {
 
   try {
     let transcript;
+    let segments = [];
+    let diarized = false;
 
     if (apiKey) {
       // Удалённый Whisper API (OpenAI / Groq)
@@ -74,10 +123,20 @@ router.post('/', upload.single('audio'), async (req, res) => {
         timeout: 30 * 60 * 1000 // 30 минут для длинных файлов
       });
       transcript = response.data.transcript;
+
+      if (response.data.diarized) {
+        // Диаризация уже выполнена whisper_service (dev/py режим)
+        segments = response.data.segments;
+        diarized = true;
+      } else if (response.data.whisper_segments?.length) {
+        // Exe режим — вызываем diarize.py через системный Python
+        segments = await runDiarize(audioPath, response.data.whisper_segments);
+        diarized = segments.length > 0;
+      }
     }
 
-    console.log(`✅ Готово!`);
-    res.json({ success: true, jobId, transcript, language, timestamp: new Date().toISOString() });
+    console.log(`✅ Готово!${diarized ? ` [диаризация: ${segments.length} блоков]` : ''}`);
+    res.json({ success: true, jobId, transcript, segments: diarized ? segments : undefined, diarized, language, timestamp: new Date().toISOString() });
 
   } catch (error) {
     const msg = error.response?.data?.error?.message

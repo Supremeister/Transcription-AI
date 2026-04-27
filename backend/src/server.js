@@ -35,6 +35,7 @@ app.get('/health', (req, res) => {
 // API Routes
 app.use('/api/transcribe', require('./routes/transcribe'));
 app.use('/api/analyze', require('./routes/analyze'));
+app.use('/api/diarize', require('./routes/diarize_setup'));
 
 // 404 Handler
 app.use((req, res) => {

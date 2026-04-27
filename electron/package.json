@@ -33,6 +33,14 @@
         "to": "backend/package.json"
       },
       {
+        "from": "../backend/diarize.py",
+        "to": "backend/diarize.py"
+      },
+      {
+        "from": "../backend/.env",
+        "to": "backend/.env"
+      },
+      {
         "from": "../frontend/dist/",
         "to": "frontend/"
       },
@@ -46,7 +54,8 @@
       }
     ],
     "win": {
-      "target": "portable"
+      "target": "portable",
+      "artifactName": "Транскрибатор.exe"
     }
   },
   "devDependencies": {

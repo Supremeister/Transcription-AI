@@ -23,6 +23,22 @@ log(`Запуск. IS_PROD=${IS_PROD}`);
 log(`APP_PATH=${APP_PATH}`);
 log(`RESOURCES=${RESOURCES}`);
 
+function loadHfToken() {
+  try {
+    const envPath = IS_PROD
+      ? path.join(RESOURCES, 'backend', '.env')
+      : path.join(APP_PATH, '..', 'backend', '.env');
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+      for (const line of lines) {
+        const m = line.match(/^HF_TOKEN\s*=\s*(.+)$/);
+        if (m) return m[1].trim();
+      }
+    }
+  } catch(e) {}
+  return null;
+}
+
 function startWhisperService() {
   const exe = IS_PROD
     ? path.join(RESOURCES, 'whisper_service.exe')
@@ -32,12 +48,19 @@ function startWhisperService() {
     ? null
     : path.join(APP_PATH, '..', 'backend', 'whisper_service.py');
 
+  const hfToken = loadHfToken();
+  const whisperEnv = { ...process.env };
+  if (hfToken) {
+    whisperEnv.HF_TOKEN = hfToken;
+    log('ℹ️ HF_TOKEN загружен для диаризации');
+  }
+
   if (fs.existsSync(exe)) {
     log(`Запускаем whisper EXE: ${exe}`);
-    whisperProcess = spawn(exe, [], { stdio: 'pipe' });
+    whisperProcess = spawn(exe, [], { stdio: 'pipe', env: whisperEnv });
   } else if (py && fs.existsSync(py)) {
     log(`Запускаем whisper через Python: ${py}`);
-    whisperProcess = spawn('python', [py], { stdio: 'pipe' });
+    whisperProcess = spawn('python', [py], { stdio: 'pipe', env: whisperEnv });
   } else {
     log('⚠️ whisper_service не найден — должен быть запущен вручную');
     return;
