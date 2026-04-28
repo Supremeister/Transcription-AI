@@ -49,13 +49,14 @@
         "to": "node.exe"
       },
       {
-        "from": "../backend/whisper_service_dist/whisper_service.exe",
-        "to": "whisper_service.exe"
+        "from": "../backend/whisper_service_dist/whisper_service/",
+        "to": "whisper_service/"
       }
     ],
     "win": {
       "target": "portable",
-      "artifactName": "Транскрибатор.exe"
+      "artifactName": "Транскрибатор.exe",
+      "icon": "resources/icon.png"
     }
   },
   "devDependencies": {

@@ -10,14 +10,21 @@ import sys
 import json
 import os
 
+# Принудительно UTF-8 для stdout на Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 def main():
     if len(sys.argv) < 3:
         print(json.dumps({"error": "Не хватает аргументов"}))
         sys.exit(1)
 
     audio_path = sys.argv[1]
-    segments = json.loads(sys.argv[2])
+    segments_file = sys.argv[2]
     hf_token = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("HF_TOKEN")
+
+    with open(segments_file, 'r', encoding='utf-8') as f:
+        segments = json.loads(f.read())
 
     if not hf_token:
         print(json.dumps({"error": "HF_TOKEN не задан"}))
@@ -33,11 +40,19 @@ def main():
 
         pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
-            use_auth_token=hf_token
+            token=hf_token
         )
-        pipeline = pipeline.to(torch.device("cpu"))
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        pipeline = pipeline.to(device)
 
-        diarization = pipeline(audio_path)
+        # Загружаем аудио через soundfile (обходит проблему с torchcodec/FFmpeg)
+        import soundfile as sf
+        import numpy as np
+        data, sample_rate = sf.read(audio_path, always_2d=True)
+        # soundfile возвращает (time, channels) → нужно (channels, time)
+        waveform = torch.tensor(data.T, dtype=torch.float32)
+        audio_input = {"waveform": waveform, "sample_rate": sample_rate}
+        diarization = pipeline(audio_input)
 
         # Маппинг SPEAKER_00 → Собеседник 1
         speaker_map = {}
@@ -50,12 +65,15 @@ def main():
                 speaker_map[raw] = f"Собеседник {counter}"
             return speaker_map[raw]
 
+        # pyannote 4.x возвращает DiarizeOutput — берём .speaker_diarization
+        annotation = diarization.speaker_diarization if hasattr(diarization, 'speaker_diarization') else diarization
+
         # Назначаем спикера каждому сегменту по максимальному перекрытию
         result = []
         for seg in segments:
             best_speaker = None
             best_overlap = 0.0
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
+            for turn, _, speaker in annotation.itertracks(yield_label=True):
                 overlap = min(seg["end"], turn.end) - max(seg["start"], turn.start)
                 if overlap > best_overlap:
                     best_overlap = overlap

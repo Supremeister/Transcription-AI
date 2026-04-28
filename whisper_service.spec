@@ -1,18 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+#
+# IMPORTANT: onedir mode (not onefile) — no temp extraction on each run.
+# Produces a FOLDER backend/whisper_service_dist/whisper_service/
+# Electron packages the whole folder into resources/whisper_service/
 
 a = Analysis(
     ['backend\\whisper_service.py'],
     pathex=[],
     binaries=[
-        # ctranslate2 DLL кладём в подпапку ctranslate2/ — именно туда
-        # ctranslate2/__init__.py добавляет os.add_dll_directory и preload-ит DLL
-        # ВАЖНО: cublas64_12.dll НЕ включаем — ctranslate2 работает без него
-        # через собственные CUDA-ядра. Если включить cublas, он находится,
-        # но не грузится (нет cudart64_12.dll) → ошибка на первом клике.
         (r'C:\Users\MSI\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\ctranslate2\ctranslate2.dll', 'ctranslate2'),
         (r'C:\Users\MSI\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\ctranslate2\cudnn64_9.dll', 'ctranslate2'),
         (r'C:\Users\MSI\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\ctranslate2\libiomp5md.dll', 'ctranslate2'),
+        (r'C:\Users\MSI\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\nvidia\cuda_runtime\bin\cudart64_12.dll', 'ctranslate2'),
+        (r'C:\Users\MSI\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\nvidia\cublas\bin\cublas64_12.dll', 'ctranslate2'),
+        (r'C:\Users\MSI\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\nvidia\cublas\bin\cublasLt64_12.dll', 'ctranslate2'),
     ],
     datas=[
         (r'C:\Users\MSI\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\faster_whisper\assets', 'faster_whisper/assets'),
@@ -30,8 +31,6 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name='whisper_service',
     debug=False,
@@ -39,11 +38,20 @@ exe = EXE(
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='whisper_service',
 )

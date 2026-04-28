@@ -36,13 +36,13 @@ if ($nodePath) {
     Write-Host "WARN: node.exe не найден. Установи Node.js и повтори." -ForegroundColor Yellow
 }
 
-# 6. Сборка whisper_service.exe
-Write-Host "`nСобираем whisper_service.exe (может занять 3-5 минут)..." -ForegroundColor Cyan
+# 6. Сборка whisper_service (onedir — папка, не одиночный exe)
+Write-Host "`nСобираем whisper_service (может занять 3-5 минут)..." -ForegroundColor Cyan
 python -m PyInstaller whisper_service.spec --noconfirm
-if (Test-Path "dist\whisper_service.exe") {
-    Write-Host "whisper_service.exe собран успешно" -ForegroundColor Green
+if (Test-Path "backend\whisper_service_dist\whisper_service\whisper_service.exe") {
+    Write-Host "whisper_service собран успешно" -ForegroundColor Green
 } else {
-    Write-Host "ERROR: сборка whisper_service.exe не удалась" -ForegroundColor Red
+    Write-Host "ERROR: сборка whisper_service не удалась" -ForegroundColor Red
 }
 
 Write-Host "`n=== Setup завершён ===" -ForegroundColor Green

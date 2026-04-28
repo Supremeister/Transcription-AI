@@ -47,6 +47,8 @@ function App() {
   };
 
   // Диаризация — настройки
+  const [modelDownload, setModelDownload] = useState(null); // {pct, done, total}
+
   const [diarizeStatus, setDiarizeStatus] = useState(null); // {python, pyannote, hfToken, ready}
   const [hfTokenDraft, setHfTokenDraft] = useState('');
   const [hfTokenSaved, setHfTokenSaved] = useState(false);
@@ -102,6 +104,10 @@ function App() {
     }
   };
 
+  // Тип диалога
+  const [dialogType, setDialogType] = useState(() => localStorage.getItem('dialogType') || 'client');
+  const setAndSaveDialogType = (type) => { setDialogType(type); localStorage.setItem('dialogType', type); };
+
   // Профиль пользователя
   const [userProfile, setUserProfile] = useState(() => localStorage.getItem('userProfile') || '');
   const [showProfile, setShowProfile] = useState(false);
@@ -119,6 +125,15 @@ function App() {
   };
 
   const useApiMode = !!apiKey;
+
+  useEffect(() => {
+    if (window.electronAPI?.onModelDownloadProgress) {
+      window.electronAPI.onModelDownloadProgress((data) => {
+        setModelDownload(data);
+        if (data.pct >= 100) setTimeout(() => setModelDownload(null), 2000);
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -189,7 +204,8 @@ function App() {
   }, [analyzing]);
 
   const runAutoAnalysis = async (text) => {
-    setAnalyzing('full');
+    const action = dialogType === 'mentor' ? 'full_mentor' : 'full_client';
+    setAnalyzing(action);
     setAiError('');
     const history = getHistory().slice(0, 3);
     try {
@@ -198,7 +214,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcript: text,
-          action: 'full',
+          action,
           userContext: userProfile || undefined,
           history: history.length ? history : undefined,
         })
@@ -216,6 +232,11 @@ function App() {
       setAnalyzing(null);
     }
   };
+
+  const DIALOG_TYPES = [
+    { value: 'client', label: 'Клиент', desc: 'Переговоры с клиентом' },
+    { value: 'mentor', label: 'Ментор', desc: 'Коучинговая беседа' },
+  ];
 
   const handleTranscribe = async () => {
     if (!audioFile) return;
@@ -478,6 +499,28 @@ function App() {
             </div>
           </div>
 
+          {/* Тип диалога */}
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Тип диалога</label>
+            <div className="flex gap-2">
+              {DIALOG_TYPES.map(({ value, label, desc }) => (
+                <button
+                  key={value}
+                  onClick={() => setAndSaveDialogType(value)}
+                  title={desc}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border font-medium text-sm transition"
+                  style={{
+                    background: dialogType === value ? '#0c3b26' : '#fff',
+                    color: dialogType === value ? '#fff' : '#374151',
+                    borderColor: dialogType === value ? '#0c3b26' : '#d1d5db',
+                  }}
+                >
+                  {value === 'client' ? '🤝' : '🎯'} {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Загрузка файла */}
           <div className="mb-5">
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -517,8 +560,13 @@ function App() {
             className="w-full disabled:bg-gray-300 text-white font-bold py-3 px-6 rounded-lg transition"
             style={{ background: (!audioFile || transcribing || !backendReady || !whisperReady) ? undefined : '#0c3b26' }}
           >
-            {transcribing ? '⏳ Обрабатываем...' : !whisperReady && backendReady ? '⏳ Запуск сервиса...' : '📝 Транскрибировать'}
+            {transcribing ? '⏳ Обрабатываем...' : !whisperReady && backendReady ? (modelDownload ? `⬇️ Загрузка модели ${modelDownload.pct}% (${modelDownload.done} / ${modelDownload.total} МБ)` : '⏳ Запуск сервиса...') : '📝 Транскрибировать'}
           </button>
+          {!whisperReady && backendReady && modelDownload && (
+            <div style={{ marginTop: 8, background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 6 }}>
+              <div style={{ width: `${modelDownload.pct}%`, height: '100%', background: '#0c3b26', transition: 'width 0.5s' }} />
+            </div>
+          )}
 
           {status && (
             <div className="mt-4 text-sm rounded-lg p-3" style={{ color: '#0c3b26', background: '#eaf3ee', border: '1px solid #b6d5c4' }}>
@@ -626,7 +674,7 @@ function App() {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50"
                 style={{ background: '#0c3b26', color: '#fff' }}
               >
-                {analyzing === 'full' ? (
+                {analyzing?.startsWith('full') ? (
                   <>
                     <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>

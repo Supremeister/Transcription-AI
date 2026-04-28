@@ -199,6 +199,16 @@
   - Positive feedback on accuracy
   - Obsidian integration working
 
+### Phase 7: Fix CUDA transcription timeout issue
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 7 to break down)
+
 ---
 
 ## Post-MVP Roadmap (Phase 2+)

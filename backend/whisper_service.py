@@ -36,6 +36,22 @@ if getattr(sys, 'frozen', False):
                 print(f"⚠️ Failed to load {os.path.basename(dll)}: {e}", flush=True)
     print(f"ℹ️ Frozen exe. DLL dir: {sys._MEIPASS}", flush=True)
 
+# ─── Перехватываем прогресс загрузки модели ──────────────────────────────────
+try:
+    from tqdm import tqdm as _orig_tqdm
+    class _ProgressTqdm(_orig_tqdm):
+        def display(self, *args, **kwargs):
+            if self.total and self.total > 1024 * 1024:
+                mb_done = self.n / (1024 * 1024)
+                mb_total = self.total / (1024 * 1024)
+                pct = int(self.n / self.total * 100)
+                print(f"DOWNLOAD_PROGRESS:{pct}:{mb_done:.1f}:{mb_total:.1f}", flush=True)
+            return super().display(*args, **kwargs)
+    import tqdm as _tqdm_mod
+    _tqdm_mod.tqdm = _ProgressTqdm
+except Exception:
+    pass
+
 # ─── Загружаем Whisper ────────────────────────────────────────────────────────
 print("⏳ Загружаем Whisper модель...", flush=True)
 MODEL = None
@@ -44,7 +60,7 @@ compute_type = "int8"
 
 try:
     from faster_whisper import WhisperModel
-    MODEL = WhisperModel("medium", device="cuda", compute_type="float16")
+    MODEL = WhisperModel("large-v3-turbo", device="cuda", compute_type="float16")
     device = "cuda"
     compute_type = "float16"
     print("✅ Модель загружена. Устройство: CUDA (float16)", flush=True)
@@ -54,7 +70,7 @@ except Exception as e:
 if MODEL is None:
     try:
         from faster_whisper import WhisperModel
-        MODEL = WhisperModel("medium", device="cpu", compute_type="int8")
+        MODEL = WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
         device = "cpu"
         compute_type = "int8"
         print("✅ Модель загружена. Устройство: CPU (int8)", flush=True)
@@ -164,7 +180,7 @@ def _merge_consecutive(segments):
 def health():
     return jsonify({
         "status": "ok" if MODEL else "error",
-        "model": "medium",
+        "model": "large-v3-turbo",
         "device": device if MODEL else "unknown",
         "diarization": DIARIZER is not None
     })

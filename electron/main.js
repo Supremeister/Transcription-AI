@@ -41,8 +41,8 @@ function loadHfToken() {
 
 function startWhisperService() {
   const exe = IS_PROD
-    ? path.join(RESOURCES, 'whisper_service.exe')
-    : path.join(APP_PATH, '..', 'backend', 'whisper_service_dist', 'whisper_service.exe');
+    ? path.join(RESOURCES, 'whisper_service', 'whisper_service.exe')
+    : path.join(APP_PATH, '..', 'backend', 'whisper_service_dist', 'whisper_service', 'whisper_service.exe');
 
   const py = IS_PROD
     ? null
@@ -66,7 +66,17 @@ function startWhisperService() {
     return;
   }
 
-  whisperProcess.stdout.on('data', d => log(`[Whisper] ${d.toString().trim()}`));
+  whisperProcess.stdout.on('data', d => {
+    const text = d.toString().trim();
+    for (const line of text.split('\n')) {
+      if (line.startsWith('DOWNLOAD_PROGRESS:')) {
+        const [, pct, done, total] = line.split(':');
+        if (mainWindow) mainWindow.webContents.send('model-download-progress', { pct: +pct, done: +done, total: +total });
+      } else {
+        log(`[Whisper] ${line}`);
+      }
+    }
+  });
   whisperProcess.stderr.on('data', d => log(`[Whisper ERR] ${d.toString().trim()}`));
   whisperProcess.on('close', code => log(`[Whisper] завершён, код: ${code}`));
 }
@@ -108,12 +118,16 @@ function startBackend() {
 }
 
 function createWindow() {
+  const iconPng = path.join(__dirname, 'resources', 'icon.png');
+  const iconIco = path.join(__dirname, 'resources', 'icon.ico');
+  const iconPath = fs.existsSync(iconIco) ? iconIco : fs.existsSync(iconPng) ? iconPng : undefined;
   mainWindow = new BrowserWindow({
     width: 900,
     height: 700,
     minWidth: 600,
     minHeight: 500,
     title: 'Транскрибатор',
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

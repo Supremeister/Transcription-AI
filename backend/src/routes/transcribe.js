@@ -31,6 +31,7 @@ function runDiarize(audioPath, whisperSegments) {
     if (!hfToken) { resolve([]); return; }
 
     const pythonCandidates = [
+      'C:\\Users\\MSI\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
       'C:\\Users\\MSI\\AppData\\Local\\Python\\bin\\python.exe',
       'python',
       'python3',
@@ -39,11 +40,22 @@ function runDiarize(audioPath, whisperSegments) {
       try { require('fs').accessSync(p); return true; } catch { return p === 'python' || p === 'python3'; }
     }) || 'python';
 
+    // Пишем сегменты во временный файл — избегаем ENAMETOOLONG на Windows
+    const os = require('os');
+    const tmpFile = path.join(os.tmpdir(), `segments_${Date.now()}.json`);
+    try {
+      fs.writeFileSync(tmpFile, JSON.stringify(whisperSegments), 'utf8');
+    } catch(e) {
+      console.error('⚠️ Не удалось записать tmp файл:', e.message);
+      resolve([]); return;
+    }
+
     const scriptPath = path.join(__dirname, '../diarize.py');
-    const args = [scriptPath, audioPath, JSON.stringify(whisperSegments), hfToken];
+    const args = [scriptPath, audioPath, tmpFile, hfToken];
 
     console.log('⏳ Диаризация через diarize.py...');
-    execFile(python, args, { timeout: 5 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+    execFile(python, args, { timeout: 5 * 60 * 1000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' }, (err, stdout) => {
+      fs.unlink(tmpFile, () => {});
       if (err) { console.error('⚠️ diarize.py ошибка:', err.message); resolve([]); return; }
       try {
         const result = JSON.parse(stdout);
@@ -123,6 +135,7 @@ router.post('/', upload.single('audio'), async (req, res) => {
         timeout: 30 * 60 * 1000 // 30 минут для длинных файлов
       });
       transcript = response.data.transcript;
+      console.log(`🔍 Ответ whisper: diarized=${response.data.diarized}, whisper_segments=${response.data.whisper_segments?.length ?? 'нет'}`);
 
       if (response.data.diarized) {
         // Диаризация уже выполнена whisper_service (dev/py режим)
@@ -130,8 +143,12 @@ router.post('/', upload.single('audio'), async (req, res) => {
         diarized = true;
       } else if (response.data.whisper_segments?.length) {
         // Exe режим — вызываем diarize.py через системный Python
+        console.log(`⏳ Запускаем diarize.py для ${response.data.whisper_segments.length} сегментов...`);
         segments = await runDiarize(audioPath, response.data.whisper_segments);
+        console.log(`🔍 diarize.py вернул: ${segments.length} блоков`);
         diarized = segments.length > 0;
+      } else {
+        console.log('⚠️ whisper_segments отсутствует — диаризация пропущена');
       }
     }
 

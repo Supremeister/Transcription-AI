@@ -1,23 +1,32 @@
-# Транскрибатор — локальный AI Speech-to-Text
+# Транскрибатор
 
-Десктопное приложение для транскрибации аудио с AI-анализом. Работает полностью локально — без интернета, без API ключей, бесплатно.
+Десктопное приложение для локальной транскрибации аудио и видео с AI-анализом.
+Работает полностью офлайн — без интернета, без API-ключей, бесплатно.
+
+---
 
 ## Что умеет
 
-- Транскрибация MP3, WAV, OGG, M4A (до 100 МБ)
-- Выбор языка (русский, английский и другие)
-- AI-анализ: исправление текста, задачи, ключевые мысли
-- CPU и GPU (CUDA 12) режимы
+### Транскрибация
+- Поддерживает MP3, WAV, OGG, M4A, MP4 (до 100 МБ)
+- Модель Faster-Whisper medium — высокая точность на русском и английском
+- Выбор языка вручную или автоопределение
+- Показывает время транскрибации и режим (GPU / CPU)
 
-## Технологии
+### Диаризация (разделение по спикерам)
+- Определяет, кто и когда говорил
+- Метки вида `[Speaker 1]`, `[Speaker 2]` в тексте
+- Работает через pyannote.audio (требует HuggingFace токен)
 
-| Компонент | Стек |
-|-----------|------|
-| Интерфейс | React + Vite + Tailwind |
-| Десктоп | Electron |
-| Backend | Node.js + Express |
-| Транскрибация | Faster-Whisper (small model) |
-| AI-анализ | Ollama (qwen2.5:3b, локально) |
+### AI-анализ текста
+- Несколько режимов анализа: исправление, задачи, ключевые мысли, резюме и др.
+- Работает через локальную модель Ollama (qwen2.5:3b, ~2 ГБ)
+- Устанавливается в один клик прямо из приложения
+
+### Ускорение на GPU
+- Автоматически использует CUDA если доступна
+- Поддержка NVIDIA GPU (CUDA 12)
+- Fallback на CPU если GPU нет
 
 ---
 
@@ -25,9 +34,13 @@
 
 ### Требования
 
-- Node.js 18+
-- Python 3.9–3.13
-- Git
+| | |
+|---|---|
+| OS | Windows 10 / 11 (x64) |
+| Node.js | 18 или выше |
+| Python | 3.10 – 3.13 |
+| Git | любая версия |
+| RAM | 4 ГБ минимум (8 ГБ рекомендуется) |
 
 ### Быстрый старт
 
@@ -37,74 +50,85 @@ cd Transcription-AI
 .\setup.ps1
 ```
 
-Скрипт установит всё автоматически: Python пакеты, npm зависимости, соберёт `whisper_service.exe`.
+Скрипт установит всё автоматически:
+- Python-пакеты (faster-whisper, flask, flask-cors)
+- npm-зависимости для backend / frontend / electron
+- Скопирует `node.exe` из системного Node.js
+- Соберёт `whisper_service` через PyInstaller (~3-5 минут)
 
-### Ручная установка
+После этого запуск:
 
 ```powershell
-# Python зависимости
-python -m pip install faster-whisper flask flask-cors
-
-# npm зависимости
-cd backend && npm install && cd ..
-cd frontend && npm install && npm run build && cd ..
-cd electron && npm install && cd ..
-
-# Скопировать node.exe
-$nodePath = (Get-Command node).Path
-Copy-Item $nodePath electron\resources\node.exe
-
-# Собрать whisper_service.exe (~5 минут)
-python -m PyInstaller whisper_service.spec --noconfirm
+cd electron
+npm start
 ```
 
----
-
-## Запуск
+### Сборка .exe для распространения
 
 ```powershell
-# Режим разработки
-cd electron && npm start
+# Сначала собери frontend
+cd frontend && npm run build && cd ..
 
-# Собрать .exe
+# Собери приложение
 cd electron && npm run build
-# → dist-exe\win-unpacked\Транскрибатор.exe
+# → dist-exe\Транскрибатор.exe
 ```
 
 ---
 
-## GPU ускорение (опционально)
+## Диаризация (опционально)
 
-По умолчанию CPU. Для GPU нужен CUDA 12:
+Разделение по спикерам требует дополнительных зависимостей.
+Запусти **`setup.bat`** — он установит pyannote.audio (~400 МБ):
 
-1. Установи CUDA Toolkit 12 с сайта NVIDIA
-2. В `whisper_service.py` строка 25:
-   ```python
-   MODEL = WhisperModel("small", device="cuda", compute_type="float16")
-   ```
-3. Пересобери: `python -m PyInstaller whisper_service.spec --noconfirm`
+```
+setup.bat
+```
+
+Затем в приложении:
+1. Откройте вкладку **Настройки**
+2. Введите токен HuggingFace (бесплатно: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens))
+3. Примите лицензию модели: [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
 
 ---
 
 ## AI-анализ (опционально)
 
-Нужен Ollama (ollama.com):
+Ollama устанавливается прямо из приложения кнопкой **"Настроить AI"**.
+Или вручную:
 
 ```powershell
+# Скачать Ollama: https://ollama.com/download
 ollama pull qwen2.5:3b
 ```
-
-Приложение автоматически определит Ollama при запуске.
 
 ---
 
 ## Структура проекта
 
 ```
-├── backend/              # Node.js API
-├── frontend/             # React UI
+├── backend/              # Node.js API (Express)
+│   ├── src/              # Routes, services
+│   ├── whisper_service.py   # Faster-Whisper HTTP-сервис
+│   └── diarize.py        # Speaker diarization
+├── frontend/             # React + Vite + Tailwind UI
 ├── electron/             # Electron shell
-├── whisper_service.py    # Faster-Whisper сервис
-├── whisper_service.spec  # PyInstaller конфиг
-└── setup.ps1             # Скрипт автоустановки
+│   └── resources/        # node.exe, icon.png
+├── whisper_service.spec  # PyInstaller конфиг (onedir)
+├── setup.ps1             # Полная установка (PowerShell)
+└── setup.bat             # Установка диаризации (pyannote.audio)
 ```
+
+---
+
+## Технологии
+
+| Компонент | Стек |
+|-----------|------|
+| Интерфейс | React + Vite + Tailwind CSS |
+| Десктоп | Electron |
+| Backend | Node.js + Express |
+| Транскрибация | Faster-Whisper (medium model) |
+| Диаризация | pyannote.audio 3.1 |
+| AI-анализ | Ollama (qwen2.5:3b, локально) |
+| GPU | CUDA 12 через ctranslate2 |
