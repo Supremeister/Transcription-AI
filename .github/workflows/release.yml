@@ -1,0 +1,103 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+            electron/package-lock.json
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache CPU venv
+        uses: actions/cache@v4
+        with:
+          path: venv_cpu_build
+          key: cpu-venv-${{ runner.os }}-py311-${{ hashFiles('whisper_service_cpu.spec') }}
+
+      - name: Install backend deps
+        run: npm install
+        working-directory: backend
+
+      - name: Build frontend
+        run: |
+          npm install
+          npm run build
+        working-directory: frontend
+
+      - name: Install electron deps
+        run: npm install
+        working-directory: electron
+
+      - name: Copy node.exe
+        shell: pwsh
+        run: |
+          $nodePath = (Get-Command node).Path
+          Copy-Item $nodePath "electron\resources\node.exe" -Force
+          Write-Host "Copied node.exe from $nodePath"
+
+      - name: Build CPU whisper_service venv
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "venv_cpu_build\Scripts\pyinstaller.exe")) {
+            Write-Host "Creating CPU venv..."
+            python -m venv venv_cpu_build
+            .\venv_cpu_build\Scripts\pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
+            .\venv_cpu_build\Scripts\pip install faster-whisper flask flask-cors tqdm pyinstaller --quiet
+          } else {
+            Write-Host "CPU venv already cached."
+          }
+
+      - name: Build whisper_service exe (CPU-only)
+        run: .\venv_cpu_build\Scripts\pyinstaller whisper_service_cpu.spec --noconfirm --distpath dist_cpu
+
+      - name: Copy whisper_service to dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\whisper_service | Out-Null
+          Copy-Item -Recurse -Force dist_cpu\whisper_service\* dist\whisper_service\
+
+      - name: Build Electron installer
+        run: npm run build
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-exe/Транскрибатор-Setup-*.exe
+          generate_release_notes: true
+          body: |
+            ## Установка
+
+            1. Скачай `Транскрибатор-Setup-*.exe` ниже
+            2. Запусти установщик
+            3. При первом запуске скачается модель Whisper (~800 МБ)
+
+            **Есть NVIDIA GPU?** Запусти `setup.bat` из папки установки для включения CUDA-ускорения.
+            **Нужна диаризация?** Тот же `setup.bat` установит pyannote.audio.
+
+            Подробнее: [INSTALL.md](https://github.com/Supremeister/Transcription-AI/blob/master/INSTALL.md)

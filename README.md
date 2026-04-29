@@ -2,6 +2,17 @@
 
 > Локальная транскрибация аудио и видео с AI-анализом. Без облаков, без подписок.
 
+## ⬇️ Скачать
+
+[![Download](https://img.shields.io/github/v/release/Supremeister/Transcription-AI?label=Скачать%20установщик&style=for-the-badge&color=0c3b26)](https://github.com/Supremeister/Transcription-AI/releases/latest)
+
+**[→ Все релизы](https://github.com/Supremeister/Transcription-AI/releases)**
+
+Скачай `Транскрибатор-Setup-*.exe`, запусти — готово.
+При первом запуске скачается модель Whisper (~800 МБ).
+
+> Нужен GPU или диаризация? → [INSTALL.md](INSTALL.md)
+
 ---
 
 ## Что умеет
