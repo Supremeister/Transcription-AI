@@ -88,8 +88,10 @@
       "artifactName": "Транскрибатор-Setup-${version}.exe",
       "deleteAppDataOnUninstall": false
     },
-    "portable": {
-      "artifactName": "Транскрибатор-Portable.exe"
+    "publish": {
+      "provider": "github",
+      "owner": "Supremeister",
+      "repo": "Transcription-AI"
     }
   },
   "devDependencies": {
@@ -97,6 +99,7 @@
     "electron-builder": "^24.0.0"
   },
   "dependencies": {
+    "electron-updater": "^6.3.0",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",

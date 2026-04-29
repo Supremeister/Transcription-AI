@@ -12,5 +12,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getBotUsername: () => ipcRenderer.invoke('get-bot-username'),
   onBotUsername: (callback) => {
     ipcRenderer.on('bot-username', (_, username) => callback(username));
-  }
+  },
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on('update-available', (_, info) => callback(info));
+  },
+  onUpdateDownloaded: (callback) => {
+    ipcRenderer.on('update-downloaded', (_, info) => callback(info));
+  },
+  installUpdate: () => ipcRenderer.invoke('install-update'),
 });

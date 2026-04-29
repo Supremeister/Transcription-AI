@@ -79,23 +79,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist\whisper_service | Out-Null
           Copy-Item -Recurse -Force dist_cpu\whisper_service\* dist\whisper_service\
 
-      - name: Build Electron installer
-        run: npx electron-builder --win --x64 --publish never
+      - name: Install electron-updater
+        run: npm install
         working-directory: electron
 
-      - name: Upload installer to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist-exe/Транскрибатор-Setup-*.exe
-          generate_release_notes: true
-          body: |
-            ## Установка
-
-            1. Скачай `Транскрибатор-Setup-*.exe` ниже
-            2. Запусти установщик
-            3. При первом запуске скачается модель Whisper (~800 МБ)
-
-            **Есть NVIDIA GPU?** Запусти `setup.bat` из папки установки для включения CUDA-ускорения.
-            **Нужна диаризация?** Тот же `setup.bat` установит pyannote.audio.
-
-            Подробнее: [INSTALL.md](https://github.com/Supremeister/Transcription-AI/blob/master/INSTALL.md)
+      - name: Build Electron installer and publish to Release
+        run: npx electron-builder --win --x64 --publish always
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

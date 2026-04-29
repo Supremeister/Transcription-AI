@@ -31,6 +31,8 @@ function App() {
   const [analyzeElapsed, setAnalyzeElapsed] = useState(0);
   const [setupInProgress, setSetupInProgress] = useState(false);
   const [setupProgress, setSetupProgress] = useState({ msg: '', pct: 0 });
+  const [updateAvailable, setUpdateAvailable] = useState(null); // {version}
+  const [updateReady, setUpdateReady] = useState(null); // {version}
   const [showAiOnboarding, setShowAiOnboarding] = useState(
     () => !localStorage.getItem('aiOnboardingDismissed')
   );
@@ -138,6 +140,12 @@ function App() {
     if (window.electronAPI?.getBotUsername) {
       window.electronAPI.getBotUsername().then(u => { if (u) setBotUsername(u); });
       window.electronAPI.onBotUsername(u => setBotUsername(u));
+    }
+    if (window.electronAPI?.onUpdateAvailable) {
+      window.electronAPI.onUpdateAvailable(info => setUpdateAvailable(info));
+    }
+    if (window.electronAPI?.onUpdateDownloaded) {
+      window.electronAPI.onUpdateDownloaded(info => setUpdateReady(info));
     }
   }, []);
 
@@ -468,6 +476,23 @@ function App() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-10">
+        {updateReady && (
+          <div className="flex items-center justify-between rounded-xl px-5 py-3 mb-4 text-sm font-medium" style={{ background: '#0c3b26', color: '#fff' }}>
+            <span>Версия {updateReady.version} скачана и готова к установке</span>
+            <button
+              onClick={() => window.electronAPI?.installUpdate()}
+              className="ml-4 px-4 py-1.5 rounded-lg font-semibold text-sm"
+              style={{ background: '#6ee7a8', color: '#0c3b26' }}
+            >
+              Установить и перезапустить
+            </button>
+          </div>
+        )}
+        {updateAvailable && !updateReady && (
+          <div className="rounded-xl px-5 py-3 mb-4 text-sm" style={{ background: '#eaf3ee', color: '#0c3b26', border: '1px solid #b6d5c4' }}>
+            Доступна новая версия {updateAvailable.version} — скачивается в фоне...
+          </div>
+        )}
         {!backendReady && !loading && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-sm text-red-800">
             ⚠️ Сервис не запущен. Перезапустите приложение. Если ошибка повторяется — обратитесь к разработчику.

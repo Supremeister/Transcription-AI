@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow = null;
 let whisperProcess = null;
@@ -71,7 +72,13 @@ function startTelegramBot() {
     }
   });
   botProcess.stderr.on('data', d => log(`[Bot ERR] ${d.toString().trim()}`));
-  botProcess.on('close', code => log(`[Bot] завершён, код: ${code}`));
+  botProcess.on('close', code => {
+    log(`[Bot] завершён, код: ${code}`);
+    if (code !== 0 && !app.isQuitting) {
+      log('[Bot] перезапускаем через 5 секунд...');
+      setTimeout(() => startTelegramBot(), 5000);
+    }
+  });
 }
 
 function startWhisperService() {
@@ -193,6 +200,29 @@ app.whenReady().then(() => {
   startBackend();
   startTelegramBot();
   createWindow();
+
+  // Автообновление — только в продакшне
+  if (IS_PROD) {
+    autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} };
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('update-available', (info) => {
+      log(`[Updater] Доступна версия ${info.version}`);
+      if (mainWindow) mainWindow.webContents.send('update-available', { version: info.version });
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      log(`[Updater] Версия ${info.version} скачана`);
+      if (mainWindow) mainWindow.webContents.send('update-downloaded', { version: info.version });
+    });
+
+    autoUpdater.on('error', (e) => log(`[Updater] Ошибка: ${e.message}`));
+
+    // Проверяем через 5 секунд после старта, потом каждые 4 часа
+    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
+    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+  }
 }).catch(err => log(`❌ app.whenReady error: ${err.message}`));
 
 function killProcess(proc) {
@@ -216,6 +246,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  app.isQuitting = true;
   killProcess(whisperProcess); whisperProcess = null;
   killProcess(backendProcess); backendProcess = null;
   killProcess(botProcess); botProcess = null;
@@ -224,6 +255,7 @@ app.on('before-quit', () => {
 process.on('uncaughtException', err => log(`❌ uncaughtException: ${err.message}\n${err.stack}`));
 
 ipcMain.handle('get-bot-username', () => botUsername);
+ipcMain.handle('install-update', () => autoUpdater.quitAndInstall());
 
 // Установка Ollama + модели
 ipcMain.handle('setup-ai', async (event) => {
