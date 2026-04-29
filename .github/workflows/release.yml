@@ -80,10 +80,8 @@ jobs:
           Copy-Item -Recurse -Force dist_cpu\whisper_service\* dist\whisper_service\
 
       - name: Build Electron installer
-        run: npm run build
+        run: npx electron-builder --win --x64 --publish never
         working-directory: electron
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload installer to Release
         uses: softprops/action-gh-release@v2

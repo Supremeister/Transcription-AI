@@ -2,6 +2,11 @@
   "name": "transcriptor",
   "version": "1.0.0",
   "description": "Локальный транскрибатор на Faster-Whisper",
+  "author": "Supremeister",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Supremeister/Transcription-AI.git"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
