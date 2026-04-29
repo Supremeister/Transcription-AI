@@ -9,12 +9,11 @@
 
 import sys
 import os
-import site
+import importlib.util
 
-# site-packages текущего Python (должен быть CPU venv, запущенный через build_cpu.bat)
-site_pkgs = site.getsitepackages()[0]
-
-faster_whisper_assets = os.path.join(site_pkgs, 'faster_whisper', 'assets')
+# Надёжный поиск faster_whisper через importlib (работает в любом venv и CI)
+_fw_spec = importlib.util.find_spec('faster_whisper')
+faster_whisper_assets = os.path.join(os.path.dirname(_fw_spec.origin), 'assets')
 
 a = Analysis(
     ['backend\\whisper_service.py'],
