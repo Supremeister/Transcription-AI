@@ -89,54 +89,32 @@ echo [OK] Python: %PYTHON%
 echo.
 
 :: ─── CUDA / GPU ──────────────────────────────────────────────────────────────
-echo Проверяем видеокарту NVIDIA...
-set HAS_NVIDIA=0
-nvidia-smi >nul 2>&1
-if %errorlevel% == 0 set HAS_NVIDIA=1
-if !HAS_NVIDIA! == 0 (
-    if exist "C:\Windows\System32\nvidia-smi.exe" (
-        "C:\Windows\System32\nvidia-smi.exe" >nul 2>&1
-        if !errorlevel! == 0 set HAS_NVIDIA=1
-    )
-)
-if !HAS_NVIDIA! == 0 (
-    wmic path win32_VideoController get name 2>nul | findstr /i "NVIDIA" >nul 2>&1
-    if !errorlevel! == 0 set HAS_NVIDIA=1
-)
-if !HAS_NVIDIA! == 1 (
-    echo [GPU] Обнаружена NVIDIA видеокарта!
+echo.
+echo У вас есть видеокарта NVIDIA (GeForce, RTX, GTX)?
+echo GPU-ускорение в 3-10 раз быстрее CPU, но потребует ~1.5 ГБ загрузки.
+echo.
+set /p CUDA_CHOICE="Установить GPU-ускорение (CUDA)? [Y/N]: "
+if /i "!CUDA_CHOICE!"=="Y" (
     echo.
-
     %PYTHON% -c "import torch; exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1
-    if %errorlevel% == 0 (
+    if !errorlevel! == 0 (
         echo [OK] CUDA уже активна — GPU-ускорение работает.
         echo.
-        goto :pyannote_section
-    )
-
-    echo Хотите включить GPU-ускорение для транскрибации?
-    echo Это ускорит обработку в 3-10 раз, но потребует скачать ~1.5 ГБ.
-    echo.
-    set /p CUDA_CHOICE="Установить CUDA-ускорение? [Y/N]: "
-    if /i "!CUDA_CHOICE!"=="Y" (
-        echo.
+    ) else (
         echo Устанавливаем torch с CUDA 12.1...
-        echo (Это займёт 5-15 минут)
+        echo (Это займёт 5-15 минут^)
         echo.
         %PYTHON% -m pip install --upgrade pip --quiet
         %PYTHON% -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121 --quiet
-        if %errorlevel% == 0 (
+        if !errorlevel! == 0 (
             echo [OK] CUDA torch установлен! GPU-ускорение активно.
         ) else (
             echo [WARN] Не удалось установить CUDA torch. Whisper продолжит работать на CPU.
         )
         echo.
-    ) else (
-        echo Пропускаем. Whisper будет работать на CPU.
-        echo.
     )
 ) else (
-    echo [INFO] NVIDIA GPU не обнаружена — Whisper работает на CPU.
+    echo [INFO] Whisper будет работать на CPU.
     echo.
 )
 
