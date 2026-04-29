@@ -605,15 +605,31 @@ function App() {
           >
             {transcribing ? '⏳ Обрабатываем...' : !whisperReady && backendReady ? (modelDownload ? `⬇️ Загрузка модели ${modelDownload.pct}% (${modelDownload.done} / ${modelDownload.total} МБ)` : '⏳ Запуск сервиса...') : '📝 Транскрибировать'}
           </button>
-          {!whisperReady && backendReady && modelDownload && (
-            <div style={{ marginTop: 8, background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 6 }}>
-              <div style={{ width: `${modelDownload.pct}%`, height: '100%', background: '#0c3b26', transition: 'width 0.5s' }} />
+          {!whisperReady && backendReady && (
+            <div style={{ marginTop: 8 }}>
+              {modelDownload ? (
+                <>
+                  <div style={{ background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 8 }}>
+                    <div style={{ width: `${modelDownload.pct}%`, height: '100%', background: '#0c3b26', transition: 'width 0.5s' }} />
+                  </div>
+                  <p className="text-xs text-center mt-1" style={{ color: '#6b7280' }}>
+                    Скачивается модель Whisper: {modelDownload.pct}% ({modelDownload.done} / {modelDownload.total} МБ)
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div style={{ background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 8 }}>
+                    <div style={{
+                      height: '100%', background: '#0c3b26', borderRadius: 8,
+                      width: '40%', animation: 'pulse-bar 1.5s ease-in-out infinite'
+                    }} />
+                  </div>
+                  <p className="text-xs text-center mt-1" style={{ color: '#9ca3af' }}>
+                    При первом запуске скачивается модель Whisper (~800 МБ) — подождите несколько минут
+                  </p>
+                </>
+              )}
             </div>
-          )}
-          {!whisperReady && backendReady && !modelDownload && (
-            <p className="text-xs text-center mt-2" style={{ color: '#9ca3af' }}>
-              При первом запуске скачивается модель Whisper (~800 МБ) — это займёт несколько минут
-            </p>
           )}
 
           {status && (
