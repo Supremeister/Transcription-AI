@@ -241,8 +241,15 @@ router.post('/', async (req, res) => {
 
 // GET /api/analyze/health
 router.get('/health', async (req, res) => {
-  // NVIDIA всегда доступна (встроенный ключ)
-  res.json({ ollama: true, hasModel: true, provider: 'nvidia' });
+  const groqReady = !!GROQ_API_KEY;
+  // Check Ollama
+  let ollamaReady = false;
+  try {
+    const r = await axios.get('http://localhost:11434/api/tags', { timeout: 1000 });
+    ollamaReady = r.data?.models?.length > 0;
+  } catch {}
+  const provider = groqReady ? 'groq' : ollamaReady ? 'ollama' : 'none';
+  res.json({ groq: groqReady, ollama: ollamaReady, hasModel: groqReady || ollamaReady, provider });
 });
 
 module.exports = router;

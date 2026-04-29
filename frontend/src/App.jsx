@@ -23,6 +23,7 @@ function App() {
 
   // AI состояние
   const [ollamaReady, setOllamaReady] = useState(false);
+  const [aiProvider, setAiProvider] = useState('none'); // 'groq' | 'ollama' | 'none'
   const [analyzing, setAnalyzing] = useState(null); // 'correct' | 'tasks' | 'keypoints' | null
   const [aiResults, setAiResults] = useState({ correct: null, tasks: null, keypoints: null });
   const [aiError, setAiError] = useState('');
@@ -143,7 +144,8 @@ function App() {
         if (res.ok) {
           const aiRes = await fetch(`${BACKEND}/api/analyze/health`);
           const aiData = await aiRes.json();
-          setOllamaReady(aiData.ollama && aiData.hasModel);
+          setOllamaReady(aiData.hasModel);
+          setAiProvider(aiData.provider || 'none');
         }
       } catch {
         setBackendReady(false);
@@ -175,7 +177,7 @@ function App() {
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const allowedExts = ['mp3', 'wav', 'ogg', 'm4a', 'aac'];
+    const allowedExts = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'mp4', 'mov', 'mkv', 'avi', 'webm'];
     const ext = file.name.split('.').pop().toLowerCase();
     if (!allowedExts.includes(ext)) {
       setError(`Формат не поддерживается. Допустимые: ${allowedExts.join(', ').toUpperCase()}`);
@@ -426,8 +428,10 @@ function App() {
                 ● {whisperDevice === 'cuda' ? 'GPU (CUDA)' : 'CPU'} · medium
               </span>
             )}
-            {backendReady && (
-              <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>● AI готов</span>
+            {backendReady && ollamaReady && (
+              <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>
+                ● AI · {aiProvider === 'groq' ? 'Groq' : aiProvider === 'ollama' ? 'Ollama' : 'готов'}
+              </span>
             )}
             <button
               onClick={openProfile}
@@ -450,9 +454,7 @@ function App() {
       <main className="max-w-3xl mx-auto px-4 py-10">
         {!backendReady && !loading && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-sm text-red-800">
-            ⚠️ Запустите backend: <code className="bg-red-100 px-2 py-0.5 rounded">cd backend && npm run dev</code>
-            <br />
-            и Python сервис: <code className="bg-red-100 px-2 py-0.5 rounded">python backend/whisper_service.py</code>
+            ⚠️ Сервис не запущен. Перезапустите приложение. Если ошибка повторяется — обратитесь к разработчику.
           </div>
         )}
 
@@ -524,7 +526,7 @@ function App() {
           {/* Загрузка файла */}
           <div className="mb-5">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Файл (MP3, WAV, OGG, M4A · до 100 МБ)
+              Файл (аудио или видео · до 100 МБ)
             </label>
             <div
               onDrop={handleDrop}
@@ -534,7 +536,7 @@ function App() {
             >
               <input
                 type="file"
-                accept="audio/*"
+                accept="audio/*,video/*"
                 onChange={handleFileChange}
                 className="hidden"
                 id="audioInput"
@@ -547,7 +549,7 @@ function App() {
               ) : (
                 <div>
                   <p className="text-gray-500">Нажмите или перетащите файл</p>
-                  <p className="text-gray-400 text-xs mt-1">MP3, WAV, OGG, M4A, AAC</p>
+                  <p className="text-gray-400 text-xs mt-1">MP3, WAV, OGG, M4A, AAC, MP4, MOV, MKV, AVI</p>
                 </div>
               )}
             </div>
@@ -662,7 +664,7 @@ function App() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-800">🤖 AI Анализ</h2>
               <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: '#eaf3ee', color: '#0c3b26' }}>
-                Llama 3.1 · Groq
+                {aiProvider === 'groq' ? 'Groq' : aiProvider === 'ollama' ? 'Ollama' : 'AI'}
               </span>
             </div>
 
