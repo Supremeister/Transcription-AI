@@ -9,6 +9,9 @@ echo.
 :: ─── Ищем Python ─────────────────────────────────────────────────────────────
 set PYTHON=
 for %%p in (
+    "C:\Program Files\Python312\python.exe"
+    "C:\Program Files\Python311\python.exe"
+    "C:\Program Files\Python310\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
@@ -40,37 +43,26 @@ echo Скачиваем Python...
 powershell -NoProfile -Command "Invoke-WebRequest -Uri '%PY_URL%' -OutFile '%PY_INSTALLER%' -UseBasicParsing"
 if %errorlevel% neq 0 (
     echo [ОШИБКА] Не удалось скачать Python. Проверьте подключение к интернету.
-    echo Или установите вручную: https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-echo Устанавливаем Python (тихая установка)...
-"%PY_INSTALLER%" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=0
+echo Устанавливаем Python для всех пользователей...
+"%PY_INSTALLER%" /quiet InstallAllUsers=1 PrependPath=1 Include_launcher=0
 if %errorlevel% neq 0 (
     echo [ОШИБКА] Установка Python завершилась с ошибкой.
-    echo Попробуйте установить вручную: https://www.python.org/downloads/
     pause
     exit /b 1
 )
 del "%PY_INSTALLER%" >nul 2>&1
 
 :: Обновляем PATH в текущей сессии
-for /f "tokens=*" %%i in ('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\"PATH\",\"User\")"') do set "PATH=%%i;%PATH%"
+for /f "tokens=*" %%i in ('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set "PATH=%%i;%PATH%"
 
-:: Проверяем после установки
-python --version >nul 2>&1
-if %errorlevel% == 0 (
-    set PYTHON=python
-    echo [OK] Python установлен успешно!
-    echo.
-    goto :found_python
-)
-
-:: Если всё равно не нашли — ищем по стандартным путям
+:: Ищем Python после установки
 for %%p in (
-    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "C:\Program Files\Python311\python.exe"
+    "C:\Program Files\Python312\python.exe"
 ) do (
     if exist %%p (
         set PYTHON=%%p
@@ -78,6 +70,14 @@ for %%p in (
         echo.
         goto :found_python
     )
+)
+
+python --version >nul 2>&1
+if %errorlevel% == 0 (
+    set PYTHON=python
+    echo [OK] Python установлен успешно!
+    echo.
+    goto :found_python
 )
 
 echo [ОШИБКА] Python установлен, но не найден. Перезапустите этот скрипт.
@@ -168,13 +168,11 @@ if %errorlevel% neq 0 (
 :done
 echo.
 echo ============================================
-echo   Готово! Теперь:
-echo   1. Откройте Транскрибатор
-echo   2. Нажмите "Настройки"
-echo   3. Введите HuggingFace токен
-echo      (получить: huggingface.co/settings/tokens)
-echo   4. Примите лицензию модели:
-echo      huggingface.co/pyannote/speaker-diarization-3.1
+echo   Всё установлено! Запустите Транскрибатор.
+echo   Для диаризации (разделение по спикерам):
+echo   - Откройте Настройки в приложении
+echo   - Введите HuggingFace токен
+echo     (получить: huggingface.co/settings/tokens)
 echo ============================================
 echo.
 pause
