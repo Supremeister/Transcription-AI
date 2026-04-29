@@ -90,8 +90,20 @@ echo.
 
 :: ─── CUDA / GPU ──────────────────────────────────────────────────────────────
 echo Проверяем видеокарту NVIDIA...
+set HAS_NVIDIA=0
 nvidia-smi >nul 2>&1
-if %errorlevel% == 0 (
+if %errorlevel% == 0 set HAS_NVIDIA=1
+if !HAS_NVIDIA! == 0 (
+    if exist "C:\Windows\System32\nvidia-smi.exe" (
+        "C:\Windows\System32\nvidia-smi.exe" >nul 2>&1
+        if !errorlevel! == 0 set HAS_NVIDIA=1
+    )
+)
+if !HAS_NVIDIA! == 0 (
+    wmic path win32_VideoController get name 2>nul | findstr /i "NVIDIA" >nul 2>&1
+    if !errorlevel! == 0 set HAS_NVIDIA=1
+)
+if !HAS_NVIDIA! == 1 (
     echo [GPU] Обнаружена NVIDIA видеокарта!
     echo.
 
