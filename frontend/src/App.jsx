@@ -20,6 +20,7 @@ function App() {
   const [elapsed, setElapsed] = useState(0);
   const [lastElapsed, setLastElapsed] = useState(null); // итоговое время последней транскрипции
   const [whisperDevice, setWhisperDevice] = useState(null); // 'cuda' | 'cpu'
+  const [whisperModel, setWhisperModel] = useState(null);
 
   // AI состояние
   const [ollamaReady, setOllamaReady] = useState(false);
@@ -179,6 +180,7 @@ function App() {
         if (data.status === 'ok') {
           setWhisperReady(true);
           setWhisperDevice(data.whisper?.device || null);
+          setWhisperModel(data.whisper?.model || null);
           return;
         }
       } catch {}
@@ -438,7 +440,7 @@ function App() {
             )}
             {backendReady && whisperDevice && (
               <span className="text-xs font-medium" style={{ color: whisperDevice === 'cuda' ? '#6ee7a8' : 'rgba(255,255,255,0.6)' }}>
-                ● {whisperDevice === 'cuda' ? 'GPU (CUDA)' : 'CPU'} · medium
+                ● {whisperDevice === 'cuda' ? 'GPU (CUDA)' : 'CPU'} · {whisperModel || 'large-v3-turbo'}
               </span>
             )}
             {backendReady && ollamaReady && (
