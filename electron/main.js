@@ -229,7 +229,7 @@ function killProcess(proc) {
   if (!proc) return;
   try {
     if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/f', '/t', '/pid', proc.pid], { stdio: 'ignore' });
+      spawnSync('taskkill', ['/f', '/t', '/pid', proc.pid.toString()], { stdio: 'ignore' });
     } else {
       proc.kill('SIGKILL');
     }
@@ -238,10 +238,17 @@ function killProcess(proc) {
   }
 }
 
+function killWhisperByName() {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/f', '/im', 'whisper_service.exe'], { stdio: 'ignore' });
+  }
+}
+
 app.on('window-all-closed', () => {
   killProcess(whisperProcess); whisperProcess = null;
   killProcess(backendProcess); backendProcess = null;
   killProcess(botProcess); botProcess = null;
+  killWhisperByName();
   app.quit();
 });
 
@@ -250,6 +257,7 @@ app.on('before-quit', () => {
   killProcess(whisperProcess); whisperProcess = null;
   killProcess(backendProcess); backendProcess = null;
   killProcess(botProcess); botProcess = null;
+  killWhisperByName();
 });
 
 process.on('uncaughtException', err => log(`❌ uncaughtException: ${err.message}\n${err.stack}`));

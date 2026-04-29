@@ -228,14 +228,35 @@ router.post('/', async (req, res) => {
     }
   }
 
-  // Groq API
+  // 2. Groq API (если ключ задан)
+  if (GROQ_API_KEY) {
+    try {
+      const result = await callGroq(prompt);
+      return res.json({ success: true, result });
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      console.error('Groq API error:', msg);
+      return res.status(500).json({ success: false, error: `Groq API: ${msg}` });
+    }
+  }
+
+  // 3. Ollama (локально)
   try {
-    const result = await callGroq(prompt);
+    const tagsRes = await axios.get('http://localhost:11434/api/tags', { timeout: 2000 });
+    const models = tagsRes.data?.models;
+    if (!models || models.length === 0) throw new Error('нет моделей');
+    const model = models[0].name;
+    const ollamaRes = await axios.post('http://localhost:11434/api/chat', {
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      stream: false,
+      options: { temperature: 0.3 }
+    }, { timeout: 120000 });
+    const result = ollamaRes.data?.message?.content?.trim();
     return res.json({ success: true, result });
   } catch (error) {
-    const msg = error.response?.data?.error?.message || error.message;
-    console.error('Groq API error:', msg);
-    return res.status(500).json({ success: false, error: `Groq API: ${msg}` });
+    const msg = error.message;
+    return res.status(500).json({ success: false, error: `Ollama недоступна: ${msg}` });
   }
 });
 
