@@ -24,7 +24,6 @@ build_tmp/
 # Бинари (скачиваются/генерируются отдельно)
 electron/resources/node.exe
 electron/resources/elevate.exe
-electron/resources/icon.ico
 
 # Backend whisper_service_dist (генерируется PyInstaller)
 backend/whisper_service_dist/
