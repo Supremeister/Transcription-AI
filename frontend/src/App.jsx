@@ -443,9 +443,9 @@ function App() {
                 ● {whisperDevice === 'cuda' ? 'GPU (CUDA)' : 'CPU'} · {whisperModel || 'large-v3-turbo'}
               </span>
             )}
-            {backendReady && ollamaReady && (
+            {backendReady && (aiProvider !== 'none' || apiKey) && (
               <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>
-                ● AI · {aiProvider === 'groq' ? 'Groq' : aiProvider === 'ollama' ? 'Ollama' : 'готов'}
+                ● AI · {apiKey ? 'Groq' : aiProvider === 'ollama' ? 'Ollama' : 'Groq'}
               </span>
             )}
             <button
@@ -732,11 +732,31 @@ function App() {
               </span>
             </div>
 
+            {/* Подсказка — нет ключа */}
+            {!apiKey && (
+              <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                <p className="font-semibold text-blue-800 text-sm mb-2">Нужен бесплатный Groq API ключ</p>
+                <ol className="text-xs text-blue-700 space-y-1 mb-3">
+                  <li>1. Перейди на <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline font-medium">console.groq.com/keys</a></li>
+                  <li>2. Зарегистрируйся (бесплатно, без карты)</li>
+                  <li>3. Нажми <strong>Create API Key</strong> → скопируй</li>
+                  <li>4. Вставь в <button onClick={() => setShowApiSettings(true)} className="underline font-medium">Настройки → AI Анализ</button></li>
+                </ol>
+                <button
+                  onClick={() => setShowApiSettings(true)}
+                  className="text-xs px-3 py-1.5 rounded-lg text-white font-medium"
+                  style={{ background: '#1a56db' }}
+                >
+                  Открыть настройки
+                </button>
+              </div>
+            )}
+
             {/* Кнопка анализа */}
             <div className="flex flex-wrap gap-2 mb-4">
               <button
                 onClick={() => runAutoAnalysis(transcript)}
-                disabled={!!analyzing}
+                disabled={!!analyzing || !apiKey}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50"
                 style={{ background: '#0c3b26', color: '#fff' }}
               >
@@ -869,6 +889,37 @@ function App() {
                   Python не найден. Установите <a href="https://python.org" target="_blank" rel="noreferrer" className="underline">Python 3.10+</a>, затем перезапустите приложение.
                 </div>
               )}
+            </div>
+
+            {/* Groq API Key */}
+            <div className="mb-6 border-t pt-5">
+              <h4 className="font-semibold text-gray-700 mb-1">🤖 AI Анализ (Groq)</h4>
+              <p className="text-xs text-gray-500 mb-3">
+                Получить ключ бесплатно: <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline text-blue-600">console.groq.com/keys</a>
+              </p>
+              <input
+                type="password"
+                placeholder="gsk_..."
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2"
+                style={{ borderColor: '#d1d5db' }}
+              />
+              <button
+                onClick={() => {
+                  localStorage.setItem('apiKey', apiKey);
+                  localStorage.setItem('apiEndpoint', 'https://api.groq.com/openai/v1');
+                  localStorage.setItem('apiModel', 'llama-3.3-70b-versatile');
+                  setApiEndpoint('https://api.groq.com/openai/v1');
+                  setApiModel('llama-3.3-70b-versatile');
+                  setShowApiSettings(false);
+                }}
+                className="mt-2 px-4 py-2 text-sm text-white rounded-lg font-medium"
+                style={{ background: '#0c3b26' }}
+              >
+                Сохранить ключ
+              </button>
+              {apiKey && <p className="text-xs text-green-600 mt-1">✅ Ключ сохранён</p>}
             </div>
 
             <div className="flex justify-end">

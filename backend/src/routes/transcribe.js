@@ -81,7 +81,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedExts = ['.mp3', '.wav', '.ogg', '.m4a', '.aac'];
     const ext = path.extname(file.originalname).toLowerCase();
