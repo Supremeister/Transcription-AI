@@ -55,12 +55,40 @@
       {
         "from": "../telegram_bot.py",
         "to": "telegram_bot.py"
+      },
+      {
+        "from": "../setup.bat",
+        "to": "setup.bat"
       }
     ],
     "win": {
-      "target": "portable",
-      "artifactName": "Транскрибатор.exe",
-      "icon": "resources/icon.png"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Транскрибатор",
+      "artifactName": "Транскрибатор-Setup-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "Транскрибатор-Portable.exe"
     }
   },
   "devDependencies": {

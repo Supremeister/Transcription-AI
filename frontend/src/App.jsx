@@ -542,7 +542,7 @@ function App() {
           {/* Загрузка файла */}
           <div className="mb-5">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Файл (аудио или видео · до 100 МБ)
+              Файл (аудио или видео · до 500 МБ)
             </label>
             <div
               onDrop={handleDrop}
@@ -584,6 +584,11 @@ function App() {
             <div style={{ marginTop: 8, background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 6 }}>
               <div style={{ width: `${modelDownload.pct}%`, height: '100%', background: '#0c3b26', transition: 'width 0.5s' }} />
             </div>
+          )}
+          {!whisperReady && backendReady && !modelDownload && (
+            <p className="text-xs text-center mt-2" style={{ color: '#9ca3af' }}>
+              При первом запуске скачивается модель Whisper (~800 МБ) — это займёт несколько минут
+            </p>
           )}
 
           {status && (

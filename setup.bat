@@ -1,5 +1,6 @@
 @echo off
 chcp 65001 >nul
+setlocal enabledelayedexpansion
 echo ============================================
 echo   Транскрибатор — Установка зависимостей
 echo ============================================
@@ -52,7 +53,49 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Проверяем — уже установлено?
+:: ─── CUDA / GPU ──────────────────────────────────────────────────────────────
+echo Проверяем видеокарту NVIDIA...
+nvidia-smi >nul 2>&1
+if %errorlevel% == 0 (
+    echo [GPU] Обнаружена NVIDIA видеокарта!
+    echo.
+
+    :: Проверяем — CUDA torch уже установлен?
+    %PYTHON% -c "import torch; exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1
+    if %errorlevel% == 0 (
+        echo [OK] CUDA уже активна — GPU-ускорение работает.
+        echo.
+        goto :pyannote_section
+    )
+
+    echo Хотите включить GPU-ускорение для транскрибации?
+    echo Это ускорит обработку в 3-10 раз, но потребует скачать ~1.5 ГБ.
+    echo.
+    set /p CUDA_CHOICE="Установить CUDA-ускорение? [Y/N]: "
+    if /i "!CUDA_CHOICE!"=="Y" (
+        echo.
+        echo Устанавливаем torch с CUDA 12.1...
+        echo (Это займёт 5-15 минут)
+        echo.
+        %PYTHON% -m pip install --upgrade pip --quiet
+        %PYTHON% -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121 --quiet
+        if %errorlevel% == 0 (
+            echo [OK] CUDA torch установлен! GPU-ускорение активно.
+        ) else (
+            echo [WARN] Не удалось установить CUDA torch. Whisper продолжит работать на CPU.
+        )
+        echo.
+    ) else (
+        echo Пропускаем. Whisper будет работать на CPU.
+        echo.
+    )
+) else (
+    echo [INFO] NVIDIA GPU не обнаружена — Whisper работает на CPU.
+    echo.
+)
+
+:: ─── pyannote.audio ──────────────────────────────────────────────────────────
+:pyannote_section
 echo Проверяем pyannote.audio...
 %PYTHON% -c "import pyannote.audio" >nul 2>&1
 if %errorlevel% == 0 (
