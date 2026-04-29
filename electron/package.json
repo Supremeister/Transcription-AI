@@ -49,8 +49,12 @@
         "to": "node.exe"
       },
       {
-        "from": "../backend/whisper_service_dist/whisper_service/",
+        "from": "../dist/whisper_service/",
         "to": "whisper_service/"
+      },
+      {
+        "from": "../telegram_bot.py",
+        "to": "telegram_bot.py"
       }
     ],
     "win": {

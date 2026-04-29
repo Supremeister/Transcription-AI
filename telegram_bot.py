@@ -147,15 +147,20 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+async def post_init(application):
+    bot_info = await application.bot.get_me()
+    print(f"BOT_USERNAME:@{bot_info.username}", flush=True)
+    logger.info(f"Бот запущен: @{bot_info.username}")
+
+
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler('start', cmd_start))
     app.add_handler(CommandHandler('help', cmd_help))
     app.add_handler(MessageHandler(
         filters.VOICE | filters.AUDIO | filters.VIDEO | filters.Document.ALL,
         handle_media
     ))
-    logger.info("Бот запущен. Нажми Ctrl+C для остановки.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

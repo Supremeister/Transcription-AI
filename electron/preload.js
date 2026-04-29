@@ -8,5 +8,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onModelDownloadProgress: (callback) => {
     ipcRenderer.on('model-download-progress', (_, data) => callback(data));
+  },
+  getBotUsername: () => ipcRenderer.invoke('get-bot-username'),
+  onBotUsername: (callback) => {
+    ipcRenderer.on('bot-username', (_, username) => callback(username));
   }
 });

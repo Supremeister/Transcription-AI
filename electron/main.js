@@ -6,6 +6,8 @@ const fs = require('fs');
 let mainWindow = null;
 let whisperProcess = null;
 let backendProcess = null;
+let botProcess = null;
+let botUsername = null;
 
 const IS_PROD = app.isPackaged;
 const APP_PATH = app.getAppPath();
@@ -23,7 +25,7 @@ log(`Запуск. IS_PROD=${IS_PROD}`);
 log(`APP_PATH=${APP_PATH}`);
 log(`RESOURCES=${RESOURCES}`);
 
-function loadHfToken() {
+function loadEnvVar(key) {
   try {
     const envPath = IS_PROD
       ? path.join(RESOURCES, 'backend', '.env')
@@ -31,7 +33,7 @@ function loadHfToken() {
     if (fs.existsSync(envPath)) {
       const lines = fs.readFileSync(envPath, 'utf8').split('\n');
       for (const line of lines) {
-        const m = line.match(/^HF_TOKEN\s*=\s*(.+)$/);
+        const m = line.match(new RegExp(`^${key}\\s*=\\s*(.+)$`));
         if (m) return m[1].trim();
       }
     }
@@ -39,10 +41,43 @@ function loadHfToken() {
   return null;
 }
 
+function loadHfToken() { return loadEnvVar('HF_TOKEN'); }
+
+function startTelegramBot() {
+  const token = loadEnvVar('TELEGRAM_BOT_TOKEN');
+  if (!token) { log('ℹ️ TELEGRAM_BOT_TOKEN не задан — бот не запущен'); return; }
+
+  const botScript = IS_PROD
+    ? path.join(RESOURCES, 'telegram_bot.py')
+    : path.join(APP_PATH, '..', 'telegram_bot.py');
+
+  if (!fs.existsSync(botScript)) { log(`⚠️ telegram_bot.py не найден: ${botScript}`); return; }
+
+  log(`Запускаем Telegram бот: ${botScript}`);
+  botProcess = spawn('python', [botScript], {
+    stdio: 'pipe',
+    env: { ...process.env, TELEGRAM_BOT_TOKEN: token, TRANSCRIBER_BACKEND: 'http://localhost:3000' }
+  });
+  botProcess.stdout.on('data', d => {
+    const text = d.toString().trim();
+    for (const line of text.split('\n')) {
+      if (line.startsWith('BOT_USERNAME:')) {
+        botUsername = line.replace('BOT_USERNAME:', '').trim();
+        log(`[Bot] username: ${botUsername}`);
+        if (mainWindow) mainWindow.webContents.send('bot-username', botUsername);
+      } else {
+        log(`[Bot] ${line}`);
+      }
+    }
+  });
+  botProcess.stderr.on('data', d => log(`[Bot ERR] ${d.toString().trim()}`));
+  botProcess.on('close', code => log(`[Bot] завершён, код: ${code}`));
+}
+
 function startWhisperService() {
   const exe = IS_PROD
     ? path.join(RESOURCES, 'whisper_service', 'whisper_service.exe')
-    : path.join(APP_PATH, '..', 'backend', 'whisper_service_dist', 'whisper_service', 'whisper_service.exe');
+    : path.join(APP_PATH, '..', 'dist', 'whisper_service', 'whisper_service.exe');
 
   const py = IS_PROD
     ? null
@@ -156,6 +191,7 @@ app.whenReady().then(() => {
   log('app ready');
   startWhisperService();
   startBackend();
+  startTelegramBot();
   createWindow();
 }).catch(err => log(`❌ app.whenReady error: ${err.message}`));
 
@@ -175,15 +211,19 @@ function killProcess(proc) {
 app.on('window-all-closed', () => {
   killProcess(whisperProcess); whisperProcess = null;
   killProcess(backendProcess); backendProcess = null;
+  killProcess(botProcess); botProcess = null;
   app.quit();
 });
 
 app.on('before-quit', () => {
   killProcess(whisperProcess); whisperProcess = null;
   killProcess(backendProcess); backendProcess = null;
+  killProcess(botProcess); botProcess = null;
 });
 
 process.on('uncaughtException', err => log(`❌ uncaughtException: ${err.message}\n${err.stack}`));
+
+ipcMain.handle('get-bot-username', () => botUsername);
 
 // Установка Ollama + модели
 ipcMain.handle('setup-ai', async (event) => {

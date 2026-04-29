@@ -24,6 +24,7 @@ function App() {
   // AI состояние
   const [ollamaReady, setOllamaReady] = useState(false);
   const [aiProvider, setAiProvider] = useState('none'); // 'groq' | 'ollama' | 'none'
+  const [botUsername, setBotUsername] = useState(null);
   const [analyzing, setAnalyzing] = useState(null); // 'correct' | 'tasks' | 'keypoints' | null
   const [aiResults, setAiResults] = useState({ correct: null, tasks: null, keypoints: null });
   const [aiError, setAiError] = useState('');
@@ -133,6 +134,10 @@ function App() {
         setModelDownload(data);
         if (data.pct >= 100) setTimeout(() => setModelDownload(null), 2000);
       });
+    }
+    if (window.electronAPI?.getBotUsername) {
+      window.electronAPI.getBotUsername().then(u => { if (u) setBotUsername(u); });
+      window.electronAPI.onBotUsername(u => setBotUsername(u));
     }
   }, []);
 
@@ -440,6 +445,17 @@ function App() {
             >
               👤 {userProfile ? 'Профиль' : 'Добавить профиль'}
             </button>
+            {botUsername && (
+              <a
+                href={`https://t.me/${botUsername.replace('@', '')}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs px-3 py-1 rounded-full font-medium transition"
+                style={{ background: 'rgba(41,182,246,0.2)', color: '#29b6f6', border: '1px solid rgba(41,182,246,0.4)', textDecoration: 'none' }}
+              >
+                ✈️ {botUsername}
+              </a>
+            )}
             <button
               onClick={() => { setShowApiSettings(true); checkDiarizeStatus(); }}
               className="text-xs px-3 py-1 rounded-full font-medium transition"
