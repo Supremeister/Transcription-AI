@@ -79,6 +79,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist\whisper_service | Out-Null
           Copy-Item -Recurse -Force dist_cpu\whisper_service\* dist\whisper_service\
 
+      - name: Sync version from git tag
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          npm version $version --no-git-tag-version --allow-same-version
+        working-directory: electron
+
       - name: Install electron-updater
         run: npm install
         working-directory: electron

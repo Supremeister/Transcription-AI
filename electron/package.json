@@ -1,6 +1,6 @@
 {
   "name": "transcriptor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Локальный транскрибатор на Faster-Whisper",
   "author": "Supremeister",
   "repository": {
@@ -92,7 +92,8 @@
     "publish": {
       "provider": "github",
       "owner": "Supremeister",
-      "repo": "Transcription-AI"
+      "repo": "Transcription-AI",
+      "releaseType": "release"
     }
   },
   "devDependencies": {
