@@ -240,37 +240,14 @@ router.post('/', async (req, res) => {
     }
   }
 
-  // 3. Ollama (локально)
-  try {
-    const tagsRes = await axios.get('http://localhost:11434/api/tags', { timeout: 2000 });
-    const models = tagsRes.data?.models;
-    if (!models || models.length === 0) throw new Error('нет моделей');
-    const model = models[0].name;
-    const ollamaRes = await axios.post('http://localhost:11434/api/chat', {
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      stream: false,
-      options: { temperature: 0.3 }
-    }, { timeout: 120000 });
-    const result = ollamaRes.data?.message?.content?.trim();
-    return res.json({ success: true, result });
-  } catch (error) {
-    const msg = error.message;
-    return res.status(500).json({ success: false, error: `Ollama недоступна: ${msg}` });
-  }
+  // Нет ключа
+  return res.status(400).json({ success: false, error: 'Введите Groq API ключ в Настройках → AI Анализ (Groq)' });
 });
 
 // GET /api/analyze/health
 router.get('/health', async (req, res) => {
   const groqReady = !!GROQ_API_KEY;
-  // Check Ollama
-  let ollamaReady = false;
-  try {
-    const r = await axios.get('http://localhost:11434/api/tags', { timeout: 1000 });
-    ollamaReady = r.data?.models?.length > 0;
-  } catch {}
-  const provider = groqReady ? 'groq' : ollamaReady ? 'ollama' : 'none';
-  res.json({ groq: groqReady, ollama: ollamaReady, hasModel: groqReady || ollamaReady, provider });
+  res.json({ groq: groqReady, ollama: false, hasModel: groqReady, provider: groqReady ? 'groq' : 'none' });
 });
 
 module.exports = router;

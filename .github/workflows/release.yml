@@ -79,6 +79,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist\whisper_service | Out-Null
           Copy-Item -Recurse -Force dist_cpu\whisper_service\* dist\whisper_service\
 
+      - name: Inject HF_TOKEN into .env
+        shell: pwsh
+        run: |
+          (Get-Content backend\.env.example) -replace '^HF_TOKEN=.*', "HF_TOKEN=${{ secrets.HF_TOKEN }}" | Set-Content backend\.env.example
+
       - name: Sync version from git tag
         shell: pwsh
         run: |
