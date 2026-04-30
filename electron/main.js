@@ -148,9 +148,11 @@ function startBackend() {
     return;
   }
 
+  const groqKey = loadEnvVar('GROQ_API_KEY');
+  const hfToken = loadEnvVar('HF_TOKEN');
   backendProcess = spawn(nodeBin, [serverJs], {
     cwd: backendDir,
-    env: { ...process.env, PORT: '3000', NODE_ENV: 'production' },
+    env: { ...process.env, PORT: '3000', NODE_ENV: 'production', GROQ_API_KEY: groqKey || '', HF_TOKEN: hfToken || '' },
     stdio: 'pipe'
   });
 
