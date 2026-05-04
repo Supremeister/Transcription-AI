@@ -66,6 +66,7 @@ jobs:
             python -m venv venv_cpu_build
             .\venv_cpu_build\Scripts\pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
             .\venv_cpu_build\Scripts\pip install faster-whisper flask flask-cors tqdm pyinstaller --quiet
+            .\venv_cpu_build\Scripts\pip install pyannote.audio --quiet
           } else {
             Write-Host "CPU venv already cached."
           }
@@ -82,7 +83,7 @@ jobs:
       - name: Inject HF_TOKEN into .env
         shell: pwsh
         run: |
-          (Get-Content backend\.env.example) -replace '^HF_TOKEN=.*', "HF_TOKEN=${{ secrets.HF_TOKEN }}" | Set-Content backend\.env.example
+          (Get-Content backend\.env) -replace '^HF_TOKEN=.*', "HF_TOKEN=${{ secrets.HF_TOKEN }}" | Set-Content backend\.env
 
       - name: Sync version from git tag
         shell: pwsh

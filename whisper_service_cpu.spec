@@ -22,13 +22,23 @@ a = Analysis(
     datas=[
         (faster_whisper_assets, 'faster_whisper/assets'),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        'pyannote.audio',
+        'pyannote.core',
+        'pyannote.database',
+        'pyannote.metrics',
+        'pyannote.pipeline',
+        'speechbrain',
+        'asteroid_filterbanks',
+        'einops',
+        'huggingface_hub',
+        'torch',
+        'torchaudio',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # CUDA / GPU — исключаем полностью
-        'nvidia', 'torch.cuda', 'torch.backends.cuda', 'torch.backends.cudnn',
         # Тяжёлые пакеты, не нужные для транскрибации
         'pandas', 'pyarrow',
         'matplotlib', 'matplotlib.pyplot',

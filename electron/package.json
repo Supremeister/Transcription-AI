@@ -42,7 +42,7 @@
         "to": "backend/diarize.py"
       },
       {
-        "from": "../backend/.env.example",
+        "from": "../backend/.env",
         "to": "backend/.env"
       },
       {
