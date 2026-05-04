@@ -82,7 +82,7 @@ if MODEL is None:
 DIARIZER = None
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
-if HF_TOKEN and not getattr(sys, 'frozen', False):
+if HF_TOKEN:
     try:
         import torch
         from pyannote.audio import Pipeline
@@ -97,7 +97,7 @@ if HF_TOKEN and not getattr(sys, 'frozen', False):
     except Exception as e:
         print(f"⚠️ Диаризация недоступна: {e}", flush=True)
         DIARIZER = None
-elif not HF_TOKEN:
+else:
     print("ℹ️ HF_TOKEN не задан — диаризация отключена", flush=True)
 
 

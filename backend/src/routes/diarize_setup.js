@@ -26,7 +26,7 @@ function findPython() {
 
   // Пробуем через PATH
   try {
-    const result = require('child_process').execSync('where python', { timeout: 3000 }).toString().trim().split('\n')[0].trim();
+    const result = require('child_process').execSync('where python', { timeout: 3000, windowsHide: true }).toString().trim().split('\n')[0].trim();
     if (result && fs.existsSync(result)) return result;
   } catch {}
 
@@ -35,7 +35,7 @@ function findPython() {
 
 function checkPyannote(pythonPath) {
   return new Promise((resolve) => {
-    execFile(pythonPath, ['-c', 'import pyannote.audio; print("ok")'], { timeout: 10000 }, (err, stdout) => {
+    execFile(pythonPath, ['-c', 'import pyannote.audio; print("ok")'], { timeout: 10000, windowsHide: true }, (err, stdout) => {
       resolve(!err && stdout.trim() === 'ok');
     });
   });
@@ -43,7 +43,9 @@ function checkPyannote(pythonPath) {
 
 function readEnvToken() {
   try {
-    const envPath = path.join(__dirname, '../../.env');
+    const envPath = process.env.NODE_ENV === 'production'
+      ? path.join(__dirname, '../.env')
+      : path.join(__dirname, '../../.env');
     if (fs.existsSync(envPath)) {
       const lines = fs.readFileSync(envPath, 'utf8').split('\n');
       for (const line of lines) {
@@ -56,7 +58,9 @@ function readEnvToken() {
 }
 
 function writeEnvToken(token) {
-  const envPath = path.join(__dirname, '../../.env');
+  const envPath = process.env.NODE_ENV === 'production'
+    ? path.join(__dirname, '../.env')
+    : path.join(__dirname, '../../.env');
   let content = '';
   try { content = fs.readFileSync(envPath, 'utf8'); } catch {}
 
@@ -115,7 +119,7 @@ router.post('/install', (req, res) => {
   send('Устанавливаем pyannote.audio...', 10);
 
   const pip = execFile(python, ['-m', 'pip', 'install', 'pyannote.audio', '--quiet'], {
-    timeout: 10 * 60 * 1000
+    timeout: 10 * 60 * 1000, windowsHide: true
   });
 
   pip.stderr.on('data', (d) => {

@@ -24,21 +24,35 @@ function getHfToken() {
   return process.env.HF_TOKEN || null;
 }
 
+function findPython() {
+  const os = require('os');
+  const username = os.userInfo().username;
+  const candidates = [
+    `C:\\Users\\${username}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`,
+    `C:\\Users\\${username}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe`,
+    `C:\\Users\\${username}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe`,
+    `C:\\Users\\${username}\\AppData\\Local\\Python\\bin\\python.exe`,
+    `C:\\Python312\\python.exe`,
+    `C:\\Python311\\python.exe`,
+    `C:\\Python310\\python.exe`,
+  ];
+  for (const p of candidates) {
+    try { fs.accessSync(p); return p; } catch {}
+  }
+  try {
+    const result = require('child_process').execSync('where python', { timeout: 3000, windowsHide: true }).toString().trim().split('\n')[0].trim();
+    if (result && fs.existsSync(result)) return result;
+  } catch {}
+  return 'python';
+}
+
 // Запускаем diarize.py через системный Python
 function runDiarize(audioPath, whisperSegments) {
   return new Promise((resolve) => {
     const hfToken = getHfToken();
     if (!hfToken) { resolve([]); return; }
 
-    const pythonCandidates = [
-      'C:\\Users\\MSI\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
-      'C:\\Users\\MSI\\AppData\\Local\\Python\\bin\\python.exe',
-      'python',
-      'python3',
-    ];
-    const python = pythonCandidates.find(p => {
-      try { require('fs').accessSync(p); return true; } catch { return p === 'python' || p === 'python3'; }
-    }) || 'python';
+    const python = findPython();
 
     // Пишем сегменты во временный файл — избегаем ENAMETOOLONG на Windows
     const os = require('os');
@@ -50,13 +64,22 @@ function runDiarize(audioPath, whisperSegments) {
       resolve([]); return;
     }
 
-    const scriptPath = path.join(__dirname, '../diarize.py');
+    // В production backend/src/ копируется в backend/, поэтому путь разный
+    const scriptPath = process.env.NODE_ENV === 'production'
+      ? path.join(__dirname, '../diarize.py')
+      : path.join(__dirname, '../../diarize.py');
     const args = [scriptPath, audioPath, tmpFile, hfToken];
 
     console.log('⏳ Диаризация через diarize.py...');
-    execFile(python, args, { timeout: 5 * 60 * 1000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' }, (err, stdout) => {
+    execFile(python, args, { timeout: 5 * 60 * 1000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8', windowsHide: true }, (err, stdout, stderr) => {
       fs.unlink(tmpFile, () => {});
-      if (err) { console.error('⚠️ diarize.py ошибка:', err.message); resolve([]); return; }
+      if (stderr?.trim()) console.error('⚠️ diarize.py stderr:', stderr.trim());
+      if (err) {
+        let pyError = err.message;
+        try { const r = JSON.parse(stdout); if (r?.error) pyError = r.error; } catch {}
+        console.error('⚠️ diarize.py ошибка:', pyError);
+        resolve([]); return;
+      }
       try {
         const result = JSON.parse(stdout);
         if (result.error) { console.error('⚠️ diarize.py:', result.error); resolve([]); return; }
@@ -83,7 +106,7 @@ const upload = multer({
   storage,
   limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedExts = ['.mp3', '.wav', '.ogg', '.m4a', '.aac'];
+    const allowedExts = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.mp4', '.mov', '.mkv', '.avi', '.webm'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExts.includes(ext)) cb(null, true);
     else cb(new Error(`Формат не поддерживается. Допустимые: ${allowedExts.join(', ')}`));
@@ -118,12 +141,24 @@ router.post('/', upload.single('audio'), async (req, res) => {
       form.append('file', fs.createReadStream(audioPath), req.file.originalname);
       form.append('model', 'whisper-large-v3');
       form.append('language', language);
+      form.append('response_format', 'verbose_json');
 
       const response = await axios.post(`${endpoint}/audio/transcriptions`, form, {
         headers: { ...form.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
         timeout: 120000
       });
       transcript = response.data.text;
+
+      // Запускаем диаризацию через diarize.py если есть сегменты с таймстемпами
+      const apiSegments = (response.data.segments || []).map(s => ({
+        start: s.start, end: s.end, text: s.text?.trim() || ''
+      }));
+      if (apiSegments.length) {
+        console.log(`⏳ Запускаем diarize.py для ${apiSegments.length} API-сегментов...`);
+        segments = await runDiarize(audioPath, apiSegments);
+        diarized = segments.length > 0;
+        console.log(`🔍 diarize.py вернул: ${segments.length} блоков`);
+      }
     } else {
       // Локальный Whisper EXE
       const form = new FormData();

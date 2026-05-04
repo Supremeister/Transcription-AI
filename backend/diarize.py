@@ -45,14 +45,24 @@ def main():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         pipeline = pipeline.to(device)
 
-        # Загружаем аудио через soundfile (обходит проблему с torchcodec/FFmpeg)
-        import soundfile as sf
-        import numpy as np
-        data, sample_rate = sf.read(audio_path, always_2d=True)
-        # soundfile возвращает (time, channels) → нужно (channels, time)
-        waveform = torch.tensor(data.T, dtype=torch.float32)
-        audio_input = {"waveform": waveform, "sample_rate": sample_rate}
-        diarization = pipeline(audio_input)
+        # Пробуем передать путь напрямую (pyannote/torchaudio умеет MP3/WAV/M4A)
+        # Если не получается — fallback через soundfile (WAV/FLAC/OGG)
+        try:
+            diarization = pipeline(audio_path)
+        except Exception as load_err:
+            import soundfile as sf
+            import numpy as np
+            try:
+                data, sample_rate = sf.read(audio_path, always_2d=True)
+                waveform = torch.tensor(data.T, dtype=torch.float32)
+                audio_input = {"waveform": waveform, "sample_rate": sample_rate}
+                diarization = pipeline(audio_input)
+            except Exception as sf_err:
+                raise RuntimeError(
+                    f"Не удалось загрузить аудио. "
+                    f"Прямой путь: {load_err}. "
+                    f"soundfile: {sf_err}"
+                )
 
         # Маппинг SPEAKER_00 → Собеседник 1
         speaker_map = {}
