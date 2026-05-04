@@ -83,7 +83,8 @@ jobs:
       - name: Inject HF_TOKEN into .env
         shell: pwsh
         run: |
-          (Get-Content backend\.env) -replace '^HF_TOKEN=.*', "HF_TOKEN=${{ secrets.HF_TOKEN }}" | Set-Content backend\.env
+          $src = if (Test-Path "backend\.env") { "backend\.env" } else { "backend\.env.example" }
+          (Get-Content $src) -replace '^HF_TOKEN=.*', "HF_TOKEN=${{ secrets.HF_TOKEN }}" | Set-Content backend\.env
 
       - name: Sync version from git tag
         shell: pwsh
