@@ -12,6 +12,7 @@ import logging
 import tempfile
 import aiohttp
 from telegram import Update
+from telegram.error import BadRequest as TgBadRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -51,14 +52,16 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
 
     # Определяем тип и получаем file_id
+    MAX_SIZE = 20 * 1024 * 1024  # 20 МБ — лимит Telegram Bot API
+
     if msg.voice:
-        tg_file = await msg.voice.get_file()
+        media_obj = msg.voice
         filename = f"voice_{msg.message_id}.ogg"
     elif msg.audio:
-        tg_file = await msg.audio.get_file()
+        media_obj = msg.audio
         filename = msg.audio.file_name or f"audio_{msg.message_id}.mp3"
     elif msg.video:
-        tg_file = await msg.video.get_file()
+        media_obj = msg.video
         filename = msg.video.file_name or f"video_{msg.message_id}.mp4"
     elif msg.document:
         doc = msg.document
@@ -67,10 +70,23 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ext not in allowed:
             await msg.reply_text("❌ Формат не поддерживается. Отправь аудио или видеофайл.")
             return
-        tg_file = await doc.get_file()
+        media_obj = doc
         filename = doc.file_name or f"file_{msg.message_id}.{ext}"
     else:
         return
+
+    # Проверяем размер до скачивания
+    file_size = getattr(media_obj, 'file_size', None)
+    if file_size and file_size > MAX_SIZE:
+        size_mb = file_size / 1024 / 1024
+        await msg.reply_text(
+            f"❌ Файл слишком большой: {size_mb:.0f} МБ\n\n"
+            f"Telegram Bot API позволяет загружать файлы до 20 МБ.\n"
+            f"Для больших файлов используй приложение на компьютере напрямую."
+        )
+        return
+
+    tg_file = await media_obj.get_file()
 
     # Язык из подписи
     caption = (msg.caption or '').strip().lower()
@@ -132,6 +148,14 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             error = result.get('error', 'неизвестная ошибка')
             await status_msg.edit_text(f"❌ Ошибка транскрибации: {error}")
 
+    except TgBadRequest as e:
+        if 'too big' in str(e).lower() or 'file is too big' in str(e).lower():
+            await msg.reply_text(
+                "❌ Файл слишком большой для Telegram Bot API (лимит 20 МБ).\n\n"
+                "Для больших файлов используй приложение на компьютере напрямую."
+            )
+        else:
+            await msg.reply_text(f"❌ Ошибка Telegram: {e}")
     except aiohttp.ClientConnectorError:
         await status_msg.edit_text(
             "❌ Не могу подключиться к транскрибатору.\n"
