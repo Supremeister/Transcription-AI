@@ -220,3 +220,13 @@ Plans:
 - [ ] Premium tier (higher usage limits)
 - [ ] Mobile app (React Native or native)
 - [ ] Fine-tuned LLM for domain-specific analysis
+
+### Phase 07.1: Fix installer: CORS, env vars, Groq key UI, CUDA detection, HF token, auto-update (INSERTED)
+
+**Goal:** Commit pending telegram_bot.py fix, verify all installer fixes (CORS, env vars, Groq key UI, CUDA detection, HF token, auto-update), build NSIS installer, and test end-to-end.
+**Requirements**: TBD
+**Depends on:** Phase 7
+**Plans:** 1 plan
+
+Plans:
+- [ ] PLAN.md — Finalize, Verify, and Ship Installer Fixes (6 tasks)

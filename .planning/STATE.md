@@ -160,3 +160,8 @@ When starting Phase 1 execution, the Claude executor should:
 
 **Last Updated:** 2026-04-19
 **Next Review:** After Phase 1 execution completion
+
+## Accumulated Context
+
+### Roadmap Evolution
+- Phase 7.1 inserted after Phase 7: Fix installer: CORS, env vars, Groq key UI, CUDA detection, HF token, auto-update (URGENT)
