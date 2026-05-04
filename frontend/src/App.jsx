@@ -221,7 +221,7 @@ function App() {
   }, [analyzing]);
 
   const runAutoAnalysis = async (text) => {
-    const action = dialogType === 'mentor' ? 'full_mentor' : 'full_client';
+    const action = dialogType === 'mentor' ? 'full_mentor' : dialogType === 'own' ? 'full' : 'full_client';
     setAnalyzing(action);
     setAiError('');
     const history = getHistory().slice(0, 3);
@@ -232,6 +232,9 @@ function App() {
         body: JSON.stringify({
           transcript: text,
           action,
+          apiKey: apiKey || undefined,
+          apiEndpoint: apiEndpoint || undefined,
+          apiModel: apiModel || undefined,
           userContext: userProfile || undefined,
           history: history.length ? history : undefined,
         })
@@ -253,6 +256,7 @@ function App() {
   const DIALOG_TYPES = [
     { value: 'client', label: 'Клиент', desc: 'Переговоры с клиентом' },
     { value: 'mentor', label: 'Ментор', desc: 'Коучинговая беседа' },
+    { value: 'own', label: 'Своё', desc: 'Задачи, ключевые выводы, зоны роста — без шаблона' },
   ];
 
   const handleTranscribe = async () => {
@@ -887,6 +891,31 @@ function App() {
               {diarizeStatus && !diarizeStatus.python && (
                 <div className="text-xs text-orange-600 bg-orange-50 rounded-lg p-3">
                   Python не найден. Установите <a href="https://python.org" target="_blank" rel="noreferrer" className="underline">Python 3.10+</a>, затем перезапустите приложение.
+                </div>
+              )}
+
+              {/* HuggingFace токен */}
+              {diarizeStatus && !diarizeStatus.hfToken && (
+                <div className="mt-3">
+                  <p className="text-xs text-gray-500 mb-1">
+                    Нужен <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" className="underline text-blue-600">HuggingFace токен</a> (бесплатно) для загрузки модели диаризации
+                  </p>
+                  <input
+                    type="password"
+                    placeholder="hf_..."
+                    value={hfTokenDraft}
+                    onChange={e => setHfTokenDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 mb-1"
+                    style={{ borderColor: '#d1d5db' }}
+                  />
+                  <button
+                    onClick={saveHfToken}
+                    disabled={!hfTokenDraft.startsWith('hf_')}
+                    className="px-4 py-1.5 text-sm text-white rounded-lg font-medium disabled:opacity-40"
+                    style={{ background: '#0c3b26' }}
+                  >
+                    {hfTokenSaved ? '✅ Сохранён!' : 'Сохранить токен'}
+                  </button>
                 </div>
               )}
             </div>
