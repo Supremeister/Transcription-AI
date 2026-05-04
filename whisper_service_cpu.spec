@@ -48,7 +48,6 @@ a = Analysis(
         'llvmlite', 'numba',
         'grpc', 'grpcio',
         'IPython', 'jupyter', 'notebook',
-        'scipy.spatial', 'scipy.optimize',
         'hf_xet',
     ],
     noarchive=False,
