@@ -11,8 +11,8 @@ const router = express.Router();
 function findPython() {
   const username = os.userInfo().username;
   const candidates = [
-    `C:\\Users\\${username}\\AppData\\Local\\Python\\bin\\python.exe`,
     `C:\\Users\\${username}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`,
+    `C:\\Users\\${username}\\AppData\\Local\\Python\\bin\\python.exe`,
     `C:\\Users\\${username}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe`,
     `C:\\Users\\${username}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe`,
     `C:\\Python312\\python.exe`,
@@ -35,7 +35,7 @@ function findPython() {
 
 function checkPyannote(pythonPath) {
   return new Promise((resolve) => {
-    execFile(pythonPath, ['-c', 'import pyannote.audio; print("ok")'], { timeout: 10000, windowsHide: true }, (err, stdout) => {
+    execFile(pythonPath, ['-c', 'import gigaam, pyannote.audio; print("ok")'], { timeout: 15000, windowsHide: true }, (err, stdout) => {
       resolve(!err && stdout.trim() === 'ok');
     });
   });
@@ -116,9 +116,15 @@ router.post('/install', (req, res) => {
 
   const send = (msg, pct) => res.write(`data: ${JSON.stringify({ msg, pct })}\n\n`);
 
-  send('Устанавливаем pyannote.audio...', 10);
+  send('Устанавливаем GigaAM и Community-1...', 10);
 
-  const pip = execFile(python, ['-m', 'pip', 'install', 'pyannote.audio', '--quiet'], {
+  const pip = execFile(python, [
+    '-m', 'pip', 'install',
+    'https://codeload.github.com/salute-developers/GigaAM/zip/559d88d6b72541412743929f633a6ae7c9950b85',
+    'pyannote.audio==4.0.4',
+    'av',
+    '--quiet',
+  ], {
     timeout: 10 * 60 * 1000, windowsHide: true
   });
 
@@ -130,7 +136,7 @@ router.post('/install', (req, res) => {
 
   pip.on('close', async (code) => {
     if (code !== 0) {
-      send('Ошибка установки. Попробуйте вручную: pip install pyannote.audio', 0);
+      send('Ошибка установки GigaAM / Community-1. Проверьте Python 3.12 и интернет.', 0);
       res.write(`data: ${JSON.stringify({ done: true, success: false })}\n\n`);
       res.end();
       return;
@@ -139,7 +145,7 @@ router.post('/install', (req, res) => {
     // Проверяем что всё установилось
     const ok = await checkPyannote(python);
     if (ok) {
-      send('✅ pyannote.audio установлен!', 100);
+      send('✅ GigaAM и Community-1 установлены!', 100);
     } else {
       send('⚠️ Установка завершена, но импорт не работает. Перезапустите приложение.', 90);
     }

@@ -16,17 +16,19 @@ out/
 .vercel/
 .cache/
 
+# Локальные данные AI-агентов и рабочие заметки (могут содержать авторизацию)
+.pi/
+/AutoRent/
+/CODEX.md
+/.planning/*/
+
 # Build artifacts (тяжёлые файлы)
 dist-exe/
-whisper_service_dist/
 build_tmp/
 
 # Бинари (скачиваются/генерируются отдельно)
 electron/resources/node.exe
 electron/resources/elevate.exe
-
-# Backend whisper_service_dist (генерируется PyInstaller)
-backend/whisper_service_dist/
 
 # Frontend build (генерируется npm run build)
 frontend/dist/

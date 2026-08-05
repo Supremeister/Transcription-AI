@@ -5,7 +5,7 @@ const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow = null;
-let whisperProcess = null;
+let gigaamProcess = null;
 let backendProcess = null;
 let botProcess = null;
 let botUsername = null;
@@ -17,8 +17,12 @@ const RESOURCES = process.resourcesPath;
 // Логирование в файл для отладки
 const logFile = path.join(app.getPath('userData'), 'app.log');
 function log(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}\n`;
-  console.log(msg);
+  const safeMsg = String(msg).replace(
+    /bot\d+:[A-Za-z0-9_-]+/gi,
+    'bot[REDACTED]'
+  );
+  const line = `[${new Date().toISOString()}] ${safeMsg}\n`;
+  console.log(safeMsg);
   try { fs.appendFileSync(logFile, line); } catch(e) {}
 }
 
@@ -43,6 +47,21 @@ function loadEnvVar(key) {
 }
 
 function loadHfToken() { return loadEnvVar('HF_TOKEN'); }
+
+function stripUnsupportedProxyEnv(env) {
+  const cleaned = { ...env };
+  for (const key of [
+    'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
+    'http_proxy', 'https_proxy', 'all_proxy',
+  ]) {
+    if (/^socks4:\/\//i.test(cleaned[key] || '')) {
+      delete cleaned[key];
+    }
+  }
+  cleaned.NO_PROXY = cleaned.NO_PROXY || '127.0.0.1,localhost';
+  cleaned.no_proxy = cleaned.no_proxy || cleaned.NO_PROXY;
+  return cleaned;
+}
 
 function startTelegramBot() {
   const token = loadEnvVar('TELEGRAM_BOT_TOKEN');
@@ -81,46 +100,58 @@ function startTelegramBot() {
   });
 }
 
-function startWhisperService() {
-  const exe = IS_PROD
-    ? path.join(RESOURCES, 'whisper_service', 'whisper_service.exe')
-    : path.join(APP_PATH, '..', 'dist', 'whisper_service', 'whisper_service.exe');
+function findGigaAmPython() {
+  const localAppData = process.env.LOCALAPPDATA || '';
+  const candidates = [
+    path.join(localAppData, 'Programs', 'Python', 'Python312', 'python.exe'),
+    'C:\\Program Files\\Python312\\python.exe',
+    'C:\\Python312\\python.exe',
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) || 'python';
+}
 
+function startGigaAmService() {
+  const exe = IS_PROD
+    ? path.join(RESOURCES, 'gigaam_service', 'gigaam_service.exe')
+    : null;
   const py = IS_PROD
     ? null
-    : path.join(APP_PATH, '..', 'backend', 'whisper_service.py');
-
+    : path.join(APP_PATH, '..', 'backend', 'gigaam_service.py');
   const hfToken = loadHfToken();
-  const whisperEnv = { ...process.env };
+  const gigaamEnv = stripUnsupportedProxyEnv(process.env);
   if (hfToken) {
-    whisperEnv.HF_TOKEN = hfToken;
-    log('ℹ️ HF_TOKEN загружен для диаризации');
+    gigaamEnv.HF_TOKEN = hfToken;
+    log('ℹ️ HF_TOKEN загружен для Community-1');
   }
 
-  if (fs.existsSync(exe)) {
-    log(`Запускаем whisper EXE: ${exe}`);
-    whisperProcess = spawn(exe, [], { stdio: 'pipe', env: whisperEnv });
+  if (exe && fs.existsSync(exe)) {
+    log(`Запускаем GigaAM EXE: ${exe}`);
+    gigaamProcess = spawn(exe, [], {
+      stdio: 'pipe',
+      env: gigaamEnv,
+      windowsHide: true,
+    });
   } else if (py && fs.existsSync(py)) {
-    log(`Запускаем whisper через Python: ${py}`);
-    whisperProcess = spawn('python', [py], { stdio: 'pipe', env: whisperEnv });
+    const python = findGigaAmPython();
+    log(`Запускаем GigaAM через Python 3.12: ${python} ${py}`);
+    gigaamProcess = spawn(python, [py], {
+      stdio: 'pipe',
+      env: gigaamEnv,
+      windowsHide: true,
+    });
   } else {
-    log('⚠️ whisper_service не найден — должен быть запущен вручную');
+    log('❌ GigaAM-сервис не найден');
     return;
   }
 
-  whisperProcess.stdout.on('data', d => {
+  gigaamProcess.stdout.on('data', d => {
     const text = d.toString().trim();
     for (const line of text.split('\n')) {
-      if (line.startsWith('DOWNLOAD_PROGRESS:')) {
-        const [, pct, done, total] = line.split(':');
-        if (mainWindow) mainWindow.webContents.send('model-download-progress', { pct: +pct, done: +done, total: +total });
-      } else {
-        log(`[Whisper] ${line}`);
-      }
+      if (line) log(`[GigaAM] ${line}`);
     }
   });
-  whisperProcess.stderr.on('data', d => log(`[Whisper ERR] ${d.toString().trim()}`));
-  whisperProcess.on('close', code => log(`[Whisper] завершён, код: ${code}`));
+  gigaamProcess.stderr.on('data', d => log(`[GigaAM ERR] ${d.toString().trim()}`));
+  gigaamProcess.on('close', code => log(`[GigaAM] завершён, код: ${code}`));
 }
 
 function startBackend() {
@@ -150,9 +181,10 @@ function startBackend() {
 
   const groqKey = loadEnvVar('GROQ_API_KEY');
   const hfToken = loadEnvVar('HF_TOKEN');
+  const backendEnv = stripUnsupportedProxyEnv(process.env);
   backendProcess = spawn(nodeBin, [serverJs], {
     cwd: backendDir,
-    env: { ...process.env, PORT: '3000', NODE_ENV: 'production', GROQ_API_KEY: groqKey || '', HF_TOKEN: hfToken || '' },
+    env: { ...backendEnv, PORT: '3000', NODE_ENV: 'production', GROQ_API_KEY: groqKey || '', HF_TOKEN: hfToken || '' },
     stdio: 'pipe'
   });
 
@@ -198,13 +230,14 @@ function createWindow() {
 
 app.whenReady().then(() => {
   log('app ready');
-  startWhisperService();
+  startGigaAmService();
   startBackend();
   startTelegramBot();
   createWindow();
 
-  // Автообновление — только в продакшне
-  if (IS_PROD) {
+  // Автообновление включается явно: устаревшие релизы не должны
+  // автоматически заменять локальную GigaAM-сборку.
+  if (IS_PROD && loadEnvVar('ENABLE_AUTO_UPDATE') === 'true') {
     autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} };
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -224,6 +257,8 @@ app.whenReady().then(() => {
     // Проверяем через 5 секунд после старта, потом каждые 4 часа
     setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+  } else if (IS_PROD) {
+    log('ℹ️ Автообновление отключено для локальной GigaAM-сборки');
   }
 }).catch(err => log(`❌ app.whenReady error: ${err.message}`));
 
@@ -240,26 +275,26 @@ function killProcess(proc) {
   }
 }
 
-function killWhisperByName() {
+function killGigaAmByName() {
   if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/f', '/im', 'whisper_service.exe'], { stdio: 'ignore' });
+    spawnSync('taskkill', ['/f', '/im', 'gigaam_service.exe'], { stdio: 'ignore' });
   }
 }
 
 app.on('window-all-closed', () => {
-  killProcess(whisperProcess); whisperProcess = null;
+  killProcess(gigaamProcess); gigaamProcess = null;
   killProcess(backendProcess); backendProcess = null;
   killProcess(botProcess); botProcess = null;
-  killWhisperByName();
+  killGigaAmByName();
   app.quit();
 });
 
 app.on('before-quit', () => {
   app.isQuitting = true;
-  killProcess(whisperProcess); whisperProcess = null;
+  killProcess(gigaamProcess); gigaamProcess = null;
   killProcess(backendProcess); backendProcess = null;
   killProcess(botProcess); botProcess = null;
-  killWhisperByName();
+  killGigaAmByName();
 });
 
 process.on('uncaughtException', err => log(`❌ uncaughtException: ${err.message}\n${err.stack}`));

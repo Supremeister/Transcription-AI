@@ -1,7 +1,7 @@
 {
   "name": "transcriptor",
   "version": "1.0.6",
-  "description": "Локальный транскрибатор на Faster-Whisper",
+  "description": "Локальный транскрибатор на GigaAM v3 RNNT",
   "author": "Supremeister",
   "repository": {
     "type": "git",
@@ -38,10 +38,6 @@
         "to": "backend/package.json"
       },
       {
-        "from": "../backend/diarize.py",
-        "to": "backend/diarize.py"
-      },
-      {
         "from": "../backend/.env",
         "to": "backend/.env"
       },
@@ -54,8 +50,8 @@
         "to": "node.exe"
       },
       {
-        "from": "../dist/whisper_service/",
-        "to": "whisper_service/"
+        "from": "../dist/gigaam_service/",
+        "to": "gigaam_service/"
       },
       {
         "from": "../telegram_bot.py",
