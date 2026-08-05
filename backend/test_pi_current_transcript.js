@@ -8,10 +8,13 @@ const { runPiAnalysis } = require('./src/services/piAgent');
 async function main() {
   const file = process.env.TRANSCRIPT_TEST_FILE;
   const projectId = process.env.PROJECT_TEST_ID;
-  if (!file || !projectId) throw new Error('Нужны TRANSCRIPT_TEST_FILE и PROJECT_TEST_ID');
+  const vaultPath = process.env.OBSIDIAN_VAULT_PATH;
+  if (!file || !projectId || !vaultPath) {
+    throw new Error('Нужны TRANSCRIPT_TEST_FILE, PROJECT_TEST_ID и OBSIDIAN_VAULT_PATH');
+  }
   const source = fs.readFileSync(file, 'utf8');
   const transcript = source.split('## Полная транскрипция')[1]?.trim() || source;
-  const index = createObsidianIndex({ vaultPath: 'C:/Users/MSI/Yandex.Disk/Base' });
+  const index = createObsidianIndex({ vaultPath });
   index.refresh();
   const context = buildContextPack(transcript, {
     index,
