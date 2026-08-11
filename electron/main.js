@@ -48,6 +48,12 @@ function loadEnvVar(key) {
 
 function loadHfToken() { return loadEnvVar('HF_TOKEN'); }
 
+function loadGigaAmPort() {
+  return loadEnvVar('GIGAAM_SERVICE_PORT')
+    || process.env.GIGAAM_SERVICE_PORT
+    || '17801';
+}
+
 function stripUnsupportedProxyEnv(env) {
   const cleaned = { ...env };
   for (const key of [
@@ -119,6 +125,7 @@ function startGigaAmService() {
     : path.join(APP_PATH, '..', 'backend', 'gigaam_service.py');
   const hfToken = loadHfToken();
   const gigaamEnv = stripUnsupportedProxyEnv(process.env);
+  gigaamEnv.GIGAAM_SERVICE_PORT = loadGigaAmPort();
   if (hfToken) {
     gigaamEnv.HF_TOKEN = hfToken;
     log('ℹ️ HF_TOKEN загружен для Community-1');
@@ -182,6 +189,7 @@ function startBackend() {
   const groqKey = loadEnvVar('GROQ_API_KEY');
   const hfToken = loadEnvVar('HF_TOKEN');
   const backendEnv = stripUnsupportedProxyEnv(process.env);
+  backendEnv.GIGAAM_SERVICE_PORT = loadGigaAmPort();
   backendProcess = spawn(nodeBin, [serverJs], {
     cwd: backendDir,
     env: { ...backendEnv, PORT: '3000', NODE_ENV: 'production', GROQ_API_KEY: groqKey || '', HF_TOKEN: hfToken || '' },

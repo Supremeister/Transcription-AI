@@ -79,6 +79,7 @@ const formatSegmentsForExport = (items) => items
 function App() {
   const [backendReady, setBackendReady] = useState(false);
   const [asrReady, setAsrReady] = useState(false);
+  const [asrStartupError, setAsrStartupError] = useState('');
   const [loading, setLoading] = useState(true);
   const [audioFile, setAudioFile] = useState(null);
   const [transcribing, setTranscribing] = useState(false);
@@ -290,10 +291,15 @@ function App() {
         const data = await res.json();
         if (data.status === 'ok') {
           setAsrReady(true);
+          setAsrStartupError('');
           setAsrDevice(data.asr?.device || null);
           setAsrModel(data.asr?.model || 'GigaAM-v3-RNNT');
           setDiarizationModel(data.asr?.diarization_model || null);
           setDiarizationReady(Boolean(data.asr?.diarization));
+          return;
+        }
+        if (data.code === 'GIGAAM_PORT_CONFLICT') {
+          setAsrStartupError(data.asr?.error || 'Порт GigaAM занят другим приложением');
           return;
         }
       } catch {}
@@ -921,6 +927,9 @@ function App() {
               <p className="text-xs text-center mt-1" style={{ color: '#9ca3af' }}>
                 При первом запуске загружаются GigaAM v3 RNNT и Community-1 — подождите несколько минут
               </p>
+              {asrStartupError && (
+                <p className="text-xs text-red-600 mt-2">{asrStartupError}</p>
+              )}
             </div>
           )}
 

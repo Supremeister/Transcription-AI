@@ -6,7 +6,8 @@ const axios = require('axios');
 const FormData = require('form-data');
 
 const router = express.Router();
-const GIGAAM_SERVICE = 'http://127.0.0.1:8001';
+const GIGAAM_SERVICE_PORT = process.env.GIGAAM_SERVICE_PORT || '17801';
+const GIGAAM_SERVICE = `http://127.0.0.1:${GIGAAM_SERVICE_PORT}`;
 const LOCAL_UPLOAD_LIMIT_BYTES = 500 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = [
   '.mp3',
@@ -123,6 +124,17 @@ router.get('/health', async (req, res) => {
     const response = await axios.get(`${GIGAAM_SERVICE}/health`, {
       timeout: 3000,
     });
+    if (response.data?.model_id !== 'v3_rnnt') {
+      return res.status(503).json({
+        status: 'error',
+        code: 'GIGAAM_PORT_CONFLICT',
+        asr: {
+          status: 'error',
+          model: 'GigaAM-v3-RNNT',
+          error: `Порт ${GIGAAM_SERVICE_PORT} занят другим локальным сервисом`,
+        },
+      });
+    }
     const ready = response.data?.status === 'ok';
     return res
       .status(ready ? 200 : 503)
