@@ -11,9 +11,10 @@ const { getDefaultTranscriptArchive } = require('../services/transcriptArchive')
 
 const router = express.Router();
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const AI_PROVIDER_MODE = process.env.AI_PROVIDER_MODE || 'none';
+const CUSTOM_API_KEY = process.env.CUSTOM_API_KEY || '';
+const CUSTOM_API_ENDPOINT = (process.env.CUSTOM_API_ENDPOINT || 'https://api.openai.com/v1').replace(/\/$/, '');
+const CUSTOM_API_MODEL = process.env.CUSTOM_API_MODEL || 'gpt-4o-mini';
 const MAX_FALLBACK_TRANSCRIPT_CHARS = 20000;
 const TASK_PROPOSAL_ACTIONS = new Set(['tasks', 'full', 'full_client', 'full_mentor']);
 const TRANSCRIPT_META_ACTIONS = new Set([
@@ -473,47 +474,11 @@ function publicAgentContext(obsidianContext) {
     : null;
 }
 
-async function callGroq(prompt, retries = 3) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const response = await axios.post(`${GROQ_ENDPOINT}/chat/completions`, {
-        model: GROQ_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 2048,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 30000
-      });
-      return response.data.choices?.[0]?.message?.content?.trim();
-    } catch (err) {
-      const status = err.response?.status;
-      const retryAfterMs = (() => {
-        // Groq возвращает "Please try again in X.Xs"
-        const msg = err.response?.data?.error?.message || '';
-        const match = msg.match(/try again in ([\d.]+)s/);
-        return match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 4000;
-      })();
-      if (status === 429 && attempt < retries) {
-        await new Promise(r => setTimeout(r, retryAfterMs));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
-
 // POST /api/analyze
 router.post('/', async (req, res) => {
   const {
     transcript,
     action,
-    apiKey,
-    apiEndpoint,
-    apiModel,
     userContext,
     history,
     sourceFilename,
@@ -566,7 +531,7 @@ router.post('/', async (req, res) => {
 
   // 1. Pi Coding Agent — основной локальный аналитик.
   // Отдельный процесс работает без tools/context/session и получает весь транскрипт.
-  if (piHealth.available) {
+  if (AI_PROVIDER_MODE === 'pi' && piHealth.available) {
     try {
       const result = await runPiAnalysis(
         buildPiPrompt(
@@ -611,6 +576,17 @@ router.post('/', async (req, res) => {
     }
   }
 
+  if (AI_PROVIDER_MODE === 'pi') {
+    return res.status(503).json({
+      success: false,
+      error: 'Pi выбран, но не готов. Откройте вход в Pi и выполните /login → ChatGPT Plus/Pro (Codex).',
+      code: 'PI_NOT_READY',
+      provider: 'pi',
+      transcriptArchive,
+      transcriptArchiveError,
+    });
+  }
+
   const prompt = buildFallbackPrompt(
     action,
     transcript,
@@ -620,17 +596,16 @@ router.post('/', async (req, res) => {
     projects
   );
 
-  // 2. Пользовательский API ключ (OpenAI-совместимый) — резерв, если Pi не установлен.
-  if (apiKey) {
-    const endpoint = (apiEndpoint || 'https://api.openai.com/v1').replace(/\/$/, '');
-    const model = apiModel || 'gpt-4o-mini';
+  // Пользовательский OpenAI-совместимый API. Ключ передан backend через
+  // зашифрованную конфигурацию Electron и никогда не приходит из renderer.
+  if (AI_PROVIDER_MODE === 'custom-api' && CUSTOM_API_KEY) {
     try {
-      const response = await axios.post(`${endpoint}/chat/completions`, {
-        model,
+      const response = await axios.post(`${CUSTOM_API_ENDPOINT}/chat/completions`, {
+        model: CUSTOM_API_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
       }, {
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': `Bearer ${CUSTOM_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 60000
       });
       const result = response.data.choices?.[0]?.message?.content?.trim();
@@ -647,7 +622,7 @@ router.post('/', async (req, res) => {
         transcriptArchive: finalized.transcriptArchive || transcriptArchive,
         transcriptArchiveError: finalized.transcriptArchiveError || transcriptArchiveError,
         provider: 'custom-api',
-        model,
+        model: CUSTOM_API_MODEL,
       });
     } catch (error) {
       const msg = error.response?.data?.error?.message || error.message;
@@ -655,36 +630,11 @@ router.post('/', async (req, res) => {
     }
   }
 
-  // 3. Groq API — резерв, если Pi не установлен.
-  if (GROQ_API_KEY) {
-    try {
-      const result = await callGroq(prompt);
-      const finalized = finalizeAnalysis(result, analysisMetadata);
-      return res.json({
-        success: true,
-        result: finalized.report,
-        proposals: finalized.proposals,
-        topic: finalized.topic,
-        summary: finalized.summary,
-        knowledge: finalized.knowledge,
-        extractionMetrics: finalized.extractionMetrics,
-        agentContext: publicAgentContext(obsidianContext),
-        transcriptArchive: finalized.transcriptArchive || transcriptArchive,
-        transcriptArchiveError: finalized.transcriptArchiveError || transcriptArchiveError,
-        provider: 'groq',
-        model: GROQ_MODEL,
-      });
-    } catch (error) {
-      const msg = error.response?.data?.error?.message || error.message;
-      console.error('Groq API error:', msg);
-      return res.status(500).json({ success: false, error: `Groq API: ${msg}` });
-    }
-  }
-
-  // Нет ключа
   return res.status(400).json({
     success: false,
-    error: 'Pi не установлен. Установите Pi Coding Agent и выполните /login, либо задайте резервный API ключ.',
+    error: AI_PROVIDER_MODE === 'custom-api'
+      ? 'Сторонний API выбран, но ключ не настроен.'
+      : 'Выберите AI-агента в настройках: Pi или сторонний OpenAI-совместимый API.',
     transcriptArchive,
     transcriptArchiveError,
   });
@@ -693,15 +643,15 @@ router.post('/', async (req, res) => {
 // GET /api/analyze/health
 router.get('/health', async (req, res) => {
   const pi = inspectPiHealth();
-  const groqReady = !!GROQ_API_KEY;
-  const piReady = pi.available && pi.authConfigured;
+  const piReady = AI_PROVIDER_MODE === 'pi' && pi.available && pi.authConfigured;
+  const customReady = AI_PROVIDER_MODE === 'custom-api' && Boolean(CUSTOM_API_KEY);
   res.json({
     pi,
-    groq: groqReady,
-    ollama: false,
-    hasModel: piReady || groqReady,
-    provider: piReady ? 'pi' : groqReady ? 'groq' : 'none',
-    model: piReady ? pi.model : groqReady ? GROQ_MODEL : null,
+    selectedMode: AI_PROVIDER_MODE,
+    customApiConfigured: customReady,
+    hasModel: piReady || customReady,
+    provider: piReady ? 'pi' : customReady ? 'custom-api' : 'none',
+    model: piReady ? pi.model : customReady ? CUSTOM_API_MODEL : null,
   });
 });
 

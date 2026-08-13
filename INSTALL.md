@@ -52,14 +52,9 @@ HuggingFace-токен нужен для Community-1 и сегментации �
 3. Примите условия моделей:
    - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1);
    - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0).
-4. Скопируйте `backend/.env.example` в `backend/.env`.
-5. Заполните:
+4. В установленном приложении откройте настройки и вставьте собственный HF read-токен. Он шифруется Windows DPAPI и не входит в установщик.
 
-```dotenv
-HF_TOKEN=hf_ваш_токен
-```
-
-Токен также можно сохранить через настройки приложения.
+HF необязателен: без токена GigaAM продолжает транскрибировать, но разделение по спикерам отключено.
 
 ## 4. Установить интерфейс и backend
 
@@ -129,18 +124,11 @@ AI-анализ необязателен и не участвует в расп�
 
 Приложение содержит только безопасную оболочку для запуска Pi. Сам Pi и файл авторизации не упаковываются в Electron-сборку и не публикуются в GitHub.
 
-Установите Pi глобально на каждом компьютере:
-
-```powershell
-npm install -g @earendil-works/pi-coding-agent
-pi
-```
-
-В открывшемся Pi выполните `/login` и выберите ChatGPT Plus/Pro (Codex). Авторизация будет сохранена локально в `%USERPROFILE%\.pi\agent\auth.json`. Не копируйте этот файл в проект и не передавайте его вместе со сборкой.
+Pi runtime входит в установщик. При первом запуске выберите «Pi + ChatGPT»: приложение откроет отдельное окно Pi. Выполните `/login` и выберите ChatGPT Plus/Pro (Codex). Авторизация будет сохранена локально в `%USERPROFILE%\.pi\agent\auth.json`. Не копируйте этот файл в проект и не передавайте его вместе со сборкой.
 
 При анализе приложение запускает Pi в RPC-режиме с флагами `--no-tools`, `--no-extensions`, `--no-skills`, `--no-context-files` и `--no-session`. Транскрипция передаётся выбранной модели; доступ к файлам и Obsidian через этот процесс отключён.
 
-Необязательные настройки находятся в `backend/.env`:
+Настройки разработческой сборки могут задаваться в `backend/.env`:
 
 ```dotenv
 PI_ANALYSIS_PROVIDER=openai-codex
@@ -148,14 +136,9 @@ PI_ANALYSIS_MODEL=gpt-5.6-sol
 PI_ANALYSIS_THINKING=high
 ```
 
-Для Groq:
+### Сторонний API
 
-1. Получите ключ на [console.groq.com](https://console.groq.com).
-2. Сохраните его в настройках приложения или в `backend/.env`:
-
-```dotenv
-GROQ_API_KEY=gsk_ваш_ключ
-```
+Вместо Pi можно выбрать любой OpenAI-совместимый API. Пользователь указывает собственные endpoint, модель и ключ. Ключ хранится зашифрованным через Windows DPAPI и не сохраняется в frontend `localStorage` или в каталоге установки.
 
 ## Telegram-бот
 

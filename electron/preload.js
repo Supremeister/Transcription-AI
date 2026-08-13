@@ -17,4 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update-downloaded', (_, info) => callback(info));
   },
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  getAppConfig: () => ipcRenderer.invoke('get-app-config'),
+  saveAppConfig: (config) => ipcRenderer.invoke('save-app-config', config),
+  openPiLogin: () => ipcRenderer.invoke('open-pi-login'),
 });

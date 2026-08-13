@@ -10,7 +10,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "prepare:pi": "npm ci --omit=dev --prefix pi-runtime",
+    "prebuild": "npm run prepare:pi",
     "build": "electron-builder --win --x64",
+    "prepack": "npm run prepare:pi",
     "pack": "electron-builder --dir"
   },
   "build": {
@@ -38,10 +41,6 @@
         "to": "backend/package.json"
       },
       {
-        "from": "../backend/.env",
-        "to": "backend/.env"
-      },
-      {
         "from": "../frontend/dist/",
         "to": "frontend/"
       },
@@ -52,6 +51,10 @@
       {
         "from": "../dist/gigaam_service/",
         "to": "gigaam_service/"
+      },
+      {
+        "from": "pi-runtime/node_modules/",
+        "to": "pi-agent/node_modules/"
       },
       {
         "from": "../telegram_bot.py",

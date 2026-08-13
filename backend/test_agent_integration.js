@@ -25,6 +25,7 @@ const server = spawn(process.execPath, [serverPath], {
     ...process.env,
     PORT: String(port),
     OBSIDIAN_VAULT_PATH: fixture,
+    AI_PROVIDER_MODE: 'pi',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
   windowsHide: true,

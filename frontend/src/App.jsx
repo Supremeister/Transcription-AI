@@ -99,7 +99,7 @@ function App() {
 
   // AI состояние
   const [ollamaReady, setOllamaReady] = useState(false);
-  const [aiProvider, setAiProvider] = useState('none'); // 'pi' | 'groq' | 'custom-api' | 'none'
+  const [aiProvider, setAiProvider] = useState('none'); // 'pi' | 'custom-api' | 'none'
   const [aiModel, setAiModel] = useState(null);
   const [piStatus, setPiStatus] = useState(null);
   const [botUsername, setBotUsername] = useState(null);
@@ -125,21 +125,42 @@ function App() {
   const [setupProgress, setSetupProgress] = useState({ msg: '', pct: 0 });
   const [updateAvailable, setUpdateAvailable] = useState(null); // {version}
   const [updateReady, setUpdateReady] = useState(null); // {version}
-  const [showAiOnboarding, setShowAiOnboarding] = useState(
-    () => !localStorage.getItem('aiOnboardingDismissed')
-  );
+  const [showAiOnboarding, setShowAiOnboarding] = useState(false);
+  const [appConfig, setAppConfig] = useState(null);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configError, setConfigError] = useState('');
 
   // API настройки
   const [showApiSettings, setShowApiSettings] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('apiKey') || '');
-  const [apiEndpoint, setApiEndpoint] = useState(() => localStorage.getItem('apiEndpoint') || 'https://api.openai.com/v1');
-  const [apiModel, setApiModel] = useState(() => localStorage.getItem('apiModel') || 'gpt-4o-mini');
+  const [aiModeDraft, setAiModeDraft] = useState('pi');
+  const [apiKeyDraft, setApiKeyDraft] = useState('');
+  const [apiEndpointDraft, setApiEndpointDraft] = useState('https://api.openai.com/v1');
+  const [apiModelDraft, setApiModelDraft] = useState('gpt-4o-mini');
 
-  const saveApiSettings = () => {
-    localStorage.setItem('apiKey', apiKey);
-    localStorage.setItem('apiEndpoint', apiEndpoint);
-    localStorage.setItem('apiModel', apiModel);
-    setShowApiSettings(false);
+  const saveAgentSettings = async () => {
+    if (!window.electronAPI?.saveAppConfig) return;
+    setConfigSaving(true);
+    setConfigError('');
+    try {
+      const payload = {
+        aiMode: aiModeDraft,
+        apiEndpoint: apiEndpointDraft,
+        apiModel: apiModelDraft,
+        onboardingComplete: true,
+      };
+      if (aiModeDraft === 'custom-api' && apiKeyDraft) payload.apiKey = apiKeyDraft;
+      const saved = await window.electronAPI.saveAppConfig(payload);
+      setAppConfig(saved);
+      setApiKeyDraft('');
+      setShowAiOnboarding(false);
+      setShowApiSettings(false);
+      if (aiModeDraft === 'pi') await window.electronAPI.openPiLogin();
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (error) {
+      setConfigError(error.message || String(error));
+    } finally {
+      setConfigSaving(false);
+    }
   };
 
   // Диаризация — настройки
@@ -161,15 +182,14 @@ function App() {
   const saveHfToken = async () => {
     if (!hfTokenDraft.startsWith('hf_')) return;
     try {
-      await fetch(`${BACKEND}/api/diarize/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: hfTokenDraft })
-      });
+      const saved = await window.electronAPI.saveAppConfig({ hfToken: hfTokenDraft });
+      setAppConfig(saved);
+      setHfTokenDraft('');
       setHfTokenSaved(true);
-      setTimeout(() => setHfTokenSaved(false), 2000);
-      checkDiarizeStatus();
-    } catch {}
+      setTimeout(() => window.location.reload(), 1800);
+    } catch (error) {
+      setConfigError(error.message || String(error));
+    }
   };
 
   const installDiarize = async () => {
@@ -234,6 +254,21 @@ function App() {
   };
 
   useEffect(() => {
+    localStorage.removeItem('apiKey');
+    localStorage.removeItem('apiEndpoint');
+    localStorage.removeItem('apiModel');
+    if (window.electronAPI?.getAppConfig) {
+      window.electronAPI.getAppConfig().then(config => {
+        setAppConfig(config);
+        setAiModeDraft(config.aiMode === 'none' ? 'pi' : config.aiMode);
+        setApiEndpointDraft(config.apiEndpoint || 'https://api.openai.com/v1');
+        setApiModelDraft(config.apiModel || 'gpt-4o-mini');
+        if (!config.onboardingComplete) {
+          setShowAiOnboarding(true);
+          setShowApiSettings(true);
+        }
+      }).catch(error => setConfigError(error.message || String(error)));
+    }
     if (window.electronAPI?.getBotUsername) {
       window.electronAPI.getBotUsername().then(u => { if (u) setBotUsername(u); });
       window.electronAPI.onBotUsername(u => setBotUsername(u));
@@ -362,9 +397,6 @@ function App() {
         body: JSON.stringify({
           transcript: text,
           action,
-          apiKey: apiKey || undefined,
-          apiEndpoint: apiEndpoint || undefined,
-          apiModel: apiModel || undefined,
           userContext: userProfile || undefined,
           history: history.length ? history : undefined,
           preferredProject: contextProject || undefined,
@@ -517,9 +549,6 @@ function App() {
         body: JSON.stringify({
           transcript: analysisTranscript,
           action,
-          apiKey: apiKey || undefined,
-          apiEndpoint: apiEndpoint || undefined,
-          apiModel: apiModel || undefined,
           userContext: userProfile || undefined,
           history: history?.length ? history : undefined,
           preferredProject: contextProject || undefined,
@@ -680,13 +709,9 @@ function App() {
     : (asrModel || 'GigaAM v3 RNNT');
   const aiDisplayName = aiProvider === 'pi'
     ? `Pi · ${aiModel || 'GPT-5.6 Sol'}`
-    : aiProvider === 'groq'
-      ? 'Groq'
-      : aiProvider === 'custom-api'
-        ? (aiModel || 'Custom API')
-        : aiProvider === 'ollama'
-          ? 'Ollama'
-          : 'AI';
+    : aiProvider === 'custom-api'
+      ? (aiModel || 'Custom API')
+      : 'AI';
 
   return (
     <div className="min-h-screen" style={{ background: '#f0f4f1' }}>
@@ -720,9 +745,9 @@ function App() {
                 ● Диаризация · Community-1{diarizationReady ? '' : ' недоступна'}
               </span>
             )}
-            {backendReady && (aiProvider !== 'none' || apiKey) && (
+            {backendReady && aiProvider !== 'none' && (
               <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>
-                ● AI · {aiProvider === 'none' && apiKey ? 'Резервный API' : aiDisplayName}
+                ● AI · {aiDisplayName}
               </span>
             )}
             {backendReady && obsidianStatus && (
@@ -1120,22 +1145,19 @@ function App() {
             )}
 
             {/* Подсказка — нет ключа */}
-            {aiProvider !== 'pi' && !apiKey && (
+            {aiProvider === 'none' && (
               <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
                 <p className="font-semibold text-blue-800 text-sm mb-2">
-                  {piStatus?.installed ? 'Нужно войти в Pi' : 'Pi не найден — можно подключить резервный Groq'}
+                  {appConfig?.aiMode === 'pi' ? 'Нужно войти в Pi' : 'AI-агент ещё не настроен'}
                 </p>
-                {piStatus?.installed ? (
+                {appConfig?.aiMode === 'pi' ? (
                   <p className="text-xs text-blue-700 mb-3">
-                    Откройте Pi в терминале и выполните <strong>/login → ChatGPT Plus/Pro (Codex)</strong>, затем перезапустите приложение.
+                    Откройте вход в Pi, выполните <strong>/login → ChatGPT Plus/Pro (Codex)</strong>, затем перезапустите приложение.
                   </p>
                 ) : (
-                <ol className="text-xs text-blue-700 space-y-1 mb-3">
-                  <li>1. Перейди на <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline font-medium">console.groq.com/keys</a></li>
-                  <li>2. Зарегистрируйся (бесплатно, без карты)</li>
-                  <li>3. Нажми <strong>Create API Key</strong> → скопируй</li>
-                  <li>4. Вставь в <button onClick={() => setShowApiSettings(true)} className="underline font-medium">Настройки → AI Анализ</button></li>
-                </ol>
+                  <p className="text-xs text-blue-700 mb-3">
+                    Выберите Pi с собственной авторизацией пользователя или сторонний OpenAI-совместимый API.
+                  </p>
                 )}
                 <button
                   onClick={() => setShowApiSettings(true)}
@@ -1151,7 +1173,7 @@ function App() {
             <div className="flex flex-wrap gap-2 mb-4">
               <button
                 onClick={() => runAutoAnalysis(segments.length > 0 ? formatSegmentsForExport(segments) : transcript)}
-                disabled={!!analyzing || (aiProvider === 'none' && !apiKey)}
+                disabled={!!analyzing || aiProvider === 'none'}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50"
                 style={{ background: '#0c3b26', color: '#fff' }}
               >
@@ -1169,7 +1191,7 @@ function App() {
                 <button
                   key={action.key}
                   onClick={() => handleAnalyze(action.key)}
-                  disabled={!!analyzing || (aiProvider === 'none' && !apiKey)}
+                  disabled={!!analyzing || aiProvider === 'none'}
                   title={action.desc}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50 border"
                   style={{ background: '#fff', color: '#0c3b26', borderColor: '#9dc6ae' }}
@@ -1372,9 +1394,19 @@ function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-5">
-              <h3 className="text-lg font-bold text-gray-800">⚙️ Настройки</h3>
-              <button onClick={() => setShowApiSettings(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              <h3 className="text-lg font-bold text-gray-800">
+                {showAiOnboarding ? 'Первоначальная настройка' : '⚙️ Настройки'}
+              </h3>
+              {!showAiOnboarding && (
+                <button onClick={() => setShowApiSettings(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              )}
             </div>
+
+            {showAiOnboarding && (
+              <p className="text-sm text-gray-600 mb-5">
+                Выберите собственного AI-агента. В установщике нет ключей и авторизации разработчика.
+              </p>
+            )}
 
             {/* Диаризация спикеров */}
             <div className="mb-6">
@@ -1441,7 +1473,7 @@ function App() {
               {diarizeStatus && !diarizeStatus.hfToken && (
                 <div className="mt-3">
                   <p className="text-xs text-gray-500 mb-1">
-                    Нужен <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" className="underline text-blue-600">HuggingFace токен</a> (бесплатно) для загрузки модели диаризации
+                    Необязательно: без HF обычная транскрибация работает, но спикеры не разделяются. Для диаризации нужен собственный <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" className="underline text-blue-600">Hugging Face read-токен</a>.
                   </p>
                   <input
                     type="password"
@@ -1463,50 +1495,79 @@ function App() {
               )}
             </div>
 
-            {/* Pi status + резервный API */}
+            {/* Выбор пользовательского AI-агента */}
             <div className="mb-6 border-t pt-5">
-              <h4 className="font-semibold text-gray-700 mb-1">🤖 Pi Analysis Agent</h4>
+              <h4 className="font-semibold text-gray-700 mb-3">🤖 AI-анализ</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setAiModeDraft('pi')}
+                  className={`text-left rounded-lg border p-3 ${aiModeDraft === 'pi' ? 'border-green-700 bg-green-50' : 'border-gray-200'}`}
+                >
+                  <div className="font-semibold text-sm">Pi + ChatGPT</div>
+                  <div className="text-xs text-gray-500 mt-1">Вход выполняет сам пользователь через /login.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAiModeDraft('custom-api')}
+                  className={`text-left rounded-lg border p-3 ${aiModeDraft === 'custom-api' ? 'border-green-700 bg-green-50' : 'border-gray-200'}`}
+                >
+                  <div className="font-semibold text-sm">Сторонний API</div>
+                  <div className="text-xs text-gray-500 mt-1">Любой OpenAI-совместимый endpoint и ключ пользователя.</div>
+                </button>
+              </div>
+
               {piStatus && (
-                <div className="text-xs mb-4 rounded-lg px-3 py-2" style={{ background: piStatus.available && piStatus.authConfigured ? '#eaf3ee' : '#fff7ed', color: '#374151' }}>
+                <div className={`text-xs mb-4 rounded-lg px-3 py-2 ${aiModeDraft === 'pi' ? '' : 'opacity-50'}`} style={{ background: piStatus.available && piStatus.authConfigured ? '#eaf3ee' : '#fff7ed', color: '#374151' }}>
                   <div>{piStatus.available ? '✅' : '❌'} Pi Coding Agent {piStatus.version || ''}</div>
                   <div>{piStatus.authConfigured ? '✅ Авторизация ChatGPT найдена' : '⚠️ Требуется /login → ChatGPT Plus/Pro (Codex)'}</div>
                   <div>Модель: {piStatus.provider || 'openai-codex'}/{piStatus.model || 'gpt-5.6-sol'} · thinking {piStatus.thinking || 'high'}</div>
                 </div>
               )}
-              <h5 className="font-medium text-gray-600 mb-1">Резервный API (необязательно)</h5>
-              <p className="text-xs text-gray-500 mb-3">
-                Используется только если Pi не установлен. Ключ Groq: <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline text-blue-600">console.groq.com/keys</a>
-              </p>
-              <input
-                type="password"
-                placeholder="gsk_..."
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2"
-                style={{ borderColor: '#d1d5db' }}
-              />
+
+              {aiModeDraft === 'custom-api' && (
+                <div className="space-y-2">
+                  <input
+                    type="url"
+                    placeholder="https://api.example.com/v1"
+                    value={apiEndpointDraft}
+                    onChange={e => setApiEndpointDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Название модели"
+                    value={apiModelDraft}
+                    onChange={e => setApiModelDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                  />
+                  <input
+                    type="password"
+                    placeholder={appConfig?.apiKeyConfigured ? 'Ключ уже сохранён; оставьте пустым, чтобы не менять' : 'API-ключ'}
+                    value={apiKeyDraft}
+                    onChange={e => setApiKeyDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                  />
+                  <p className="text-xs text-gray-500">Ключ шифруется Windows DPAPI для текущего пользователя и не хранится в localStorage.</p>
+                </div>
+              )}
+
+              {configError && <p className="text-xs text-red-600 mt-3">{configError}</p>}
               <button
-                onClick={() => {
-                  localStorage.setItem('apiKey', apiKey);
-                  localStorage.setItem('apiEndpoint', 'https://api.groq.com/openai/v1');
-                  localStorage.setItem('apiModel', 'llama-3.3-70b-versatile');
-                  setApiEndpoint('https://api.groq.com/openai/v1');
-                  setApiModel('llama-3.3-70b-versatile');
-                  setShowApiSettings(false);
-                }}
-                className="mt-2 px-4 py-2 text-sm text-white rounded-lg font-medium"
+                onClick={saveAgentSettings}
+                disabled={configSaving || (aiModeDraft === 'custom-api' && !apiKeyDraft && !appConfig?.apiKeyConfigured)}
+                className="mt-4 w-full px-4 py-2 text-sm text-white rounded-lg font-medium disabled:opacity-40"
                 style={{ background: '#0c3b26' }}
               >
-                Сохранить ключ
+                {configSaving ? 'Сохраняем...' : aiModeDraft === 'pi' ? 'Сохранить и открыть вход в Pi' : 'Сохранить сторонний API'}
               </button>
-              {apiKey && <p className="text-xs text-green-600 mt-1">✅ Ключ сохранён</p>}
             </div>
 
-            <div className="flex justify-end">
+            {!showAiOnboarding && <div className="flex justify-end">
               <button onClick={() => setShowApiSettings(false)} className="px-4 py-2 text-sm text-white rounded-lg font-medium" style={{ background: '#0c3b26' }}>
                 Закрыть
               </button>
-            </div>
+            </div>}
           </div>
         </div>
       )}

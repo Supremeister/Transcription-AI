@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -9,6 +9,7 @@ let gigaamProcess = null;
 let backendProcess = null;
 let botProcess = null;
 let botUsername = null;
+const USER_CONFIG_VERSION = 1;
 
 const IS_PROD = app.isPackaged;
 const APP_PATH = app.getAppPath();
@@ -46,7 +47,85 @@ function loadEnvVar(key) {
   return null;
 }
 
-function loadHfToken() { return loadEnvVar('HF_TOKEN'); }
+function getUserConfigPath() {
+  return path.join(app.getPath('userData'), 'secure-config.json');
+}
+
+function readUserConfig() {
+  const defaults = {
+    version: USER_CONFIG_VERSION,
+    onboardingComplete: false,
+    aiMode: 'none',
+    apiEndpoint: 'https://api.openai.com/v1',
+    apiModel: 'gpt-4o-mini',
+    apiKeyEncrypted: null,
+    hfTokenEncrypted: null,
+  };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(getUserConfigPath(), 'utf8'));
+    return { ...defaults, ...parsed };
+  } catch {
+    return defaults;
+  }
+}
+
+function decryptSecret(value) {
+  if (!value || !safeStorage.isEncryptionAvailable()) return '';
+  try {
+    return safeStorage.decryptString(Buffer.from(value, 'base64'));
+  } catch {
+    return '';
+  }
+}
+
+function encryptSecret(value) {
+  if (!value) return null;
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Windows не предоставил защищённое хранилище DPAPI');
+  }
+  return safeStorage.encryptString(String(value)).toString('base64');
+}
+
+function writeUserConfig(next) {
+  const configPath = getUserConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(next, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+}
+
+function loadHfToken() {
+  return decryptSecret(readUserConfig().hfTokenEncrypted) || loadEnvVar('HF_TOKEN');
+}
+
+function findBundledPiCli() {
+  const base = IS_PROD
+    ? path.join(RESOURCES, 'pi-agent', 'node_modules')
+    : path.join(APP_PATH, 'pi-runtime', 'node_modules');
+  const candidate = path.join(
+    base,
+    '@earendil-works',
+    'pi-coding-agent',
+    'dist',
+    'cli.js'
+  );
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function publicUserConfig() {
+  const config = readUserConfig();
+  return {
+    onboardingComplete: Boolean(config.onboardingComplete),
+    aiMode: config.aiMode,
+    apiEndpoint: config.apiEndpoint,
+    apiModel: config.apiModel,
+    apiKeyConfigured: Boolean(decryptSecret(config.apiKeyEncrypted)),
+    hfTokenConfigured: Boolean(loadHfToken()),
+    encryptionAvailable: safeStorage.isEncryptionAvailable(),
+    piBundled: Boolean(findBundledPiCli()),
+  };
+}
 
 function loadGigaAmPort() {
   return loadEnvVar('GIGAAM_SERVICE_PORT')
@@ -186,13 +265,19 @@ function startBackend() {
     return;
   }
 
-  const groqKey = loadEnvVar('GROQ_API_KEY');
-  const hfToken = loadEnvVar('HF_TOKEN');
+  const userConfig = readUserConfig();
+  const customApiKey = decryptSecret(userConfig.apiKeyEncrypted);
+  const hfToken = loadHfToken();
   const backendEnv = stripUnsupportedProxyEnv(process.env);
   backendEnv.GIGAAM_SERVICE_PORT = loadGigaAmPort();
+  backendEnv.AI_PROVIDER_MODE = userConfig.aiMode || 'none';
+  backendEnv.CUSTOM_API_ENDPOINT = userConfig.apiEndpoint || 'https://api.openai.com/v1';
+  backendEnv.CUSTOM_API_MODEL = userConfig.apiModel || 'gpt-4o-mini';
+  backendEnv.CUSTOM_API_KEY = customApiKey;
+  backendEnv.PI_CLI_JS = findBundledPiCli() || backendEnv.PI_CLI_JS || '';
   backendProcess = spawn(nodeBin, [serverJs], {
     cwd: backendDir,
-    env: { ...backendEnv, PORT: '3000', NODE_ENV: 'production', GROQ_API_KEY: groqKey || '', HF_TOKEN: hfToken || '' },
+    env: { ...backendEnv, PORT: '3000', NODE_ENV: 'production', HF_TOKEN: hfToken || '' },
     stdio: 'pipe'
   });
 
@@ -309,6 +394,77 @@ process.on('uncaughtException', err => log(`❌ uncaughtException: ${err.message
 
 ipcMain.handle('get-bot-username', () => botUsername);
 ipcMain.handle('install-update', () => autoUpdater.quitAndInstall());
+
+ipcMain.handle('get-app-config', () => publicUserConfig());
+
+ipcMain.handle('save-app-config', async (_event, input = {}) => {
+  const previous = readUserConfig();
+  const next = { ...previous, version: USER_CONFIG_VERSION };
+  if (input.aiMode !== undefined) {
+    if (!['none', 'pi', 'custom-api'].includes(input.aiMode)) {
+      throw new Error('Неизвестный режим AI');
+    }
+    next.aiMode = input.aiMode;
+  }
+  if (input.apiEndpoint !== undefined) {
+    const endpoint = String(input.apiEndpoint).trim().replace(/\/$/, '');
+    const parsed = new URL(endpoint);
+    const localHttp = parsed.protocol === 'http:'
+      && ['127.0.0.1', 'localhost'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !localHttp) {
+      throw new Error('API endpoint должен использовать HTTPS (HTTP разрешён только для localhost)');
+    }
+    next.apiEndpoint = endpoint;
+  }
+  if (input.apiModel !== undefined) {
+    const model = String(input.apiModel).trim();
+    if (!model) throw new Error('Укажите модель API');
+    next.apiModel = model;
+  }
+  if (input.apiKey !== undefined) {
+    next.apiKeyEncrypted = encryptSecret(String(input.apiKey).trim());
+  }
+  if (input.hfToken !== undefined) {
+    const token = String(input.hfToken).trim();
+    if (token && !token.startsWith('hf_')) {
+      throw new Error('Hugging Face токен должен начинаться с hf_');
+    }
+    next.hfTokenEncrypted = encryptSecret(token);
+  }
+  if (input.onboardingComplete !== undefined) {
+    next.onboardingComplete = Boolean(input.onboardingComplete);
+  }
+  if (next.aiMode === 'custom-api' && !decryptSecret(next.apiKeyEncrypted)) {
+    throw new Error('Для стороннего API нужен ключ');
+  }
+  writeUserConfig(next);
+
+  const hfChanged = previous.hfTokenEncrypted !== next.hfTokenEncrypted;
+  killProcess(backendProcess); backendProcess = null;
+  if (hfChanged) {
+    killProcess(gigaamProcess); gigaamProcess = null;
+    startGigaAmService();
+  }
+  startBackend();
+  return publicUserConfig();
+});
+
+ipcMain.handle('open-pi-login', () => {
+  const cliPath = findBundledPiCli();
+  if (!cliPath) throw new Error('Pi не найден в составе приложения');
+  const developmentNode = path.join(APP_PATH, 'resources', 'node.exe');
+  const nodeBin = IS_PROD
+    ? path.join(RESOURCES, 'node.exe')
+    : (fs.existsSync(developmentNode) ? developmentNode : 'node');
+  const command = `title Pi Login && "${nodeBin}" "${cliPath}"`;
+  const loginProcess = spawn('cmd.exe', ['/k', command], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false,
+  });
+  loginProcess.unref();
+  return { success: true };
+});
 
 // Установка Ollama + модели
 ipcMain.handle('setup-ai', async (event) => {
