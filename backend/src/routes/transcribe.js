@@ -9,6 +9,8 @@ const router = express.Router();
 const GIGAAM_SERVICE_PORT = process.env.GIGAAM_SERVICE_PORT || '17801';
 const GIGAAM_SERVICE = `http://127.0.0.1:${GIGAAM_SERVICE_PORT}`;
 const LOCAL_UPLOAD_LIMIT_BYTES = 500 * 1024 * 1024;
+const APP_USER_DATA = process.env.APP_USER_DATA
+  || path.join(process.env.APPDATA || process.env.TEMP || __dirname, 'transcriptor');
 const ALLOWED_EXTENSIONS = [
   '.mp3',
   '.wav',
@@ -40,11 +42,13 @@ function normalizeSpeakerMode(value) {
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../../data/uploads');
-    if (!fs.existsSync(uploadDir)) {
+    const uploadDir = path.join(APP_USER_DATA, 'data', 'uploads');
+    try {
       fs.mkdirSync(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error);
     }
-    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;

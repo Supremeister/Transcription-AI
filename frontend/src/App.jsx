@@ -5,6 +5,18 @@ const BACKEND = 'http://localhost:3000';
 
 const AI_ANALYSIS_ENABLED = true;
 
+const PI_MODELS = [
+  'gpt-5.3-codex-spark',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.5',
+  'gpt-5.6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+];
+
+const PI_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
 const KNOWLEDGE_KIND_LABELS = {
   fact: 'Факт',
   metric: 'Метрика',
@@ -133,6 +145,8 @@ function App() {
   // API настройки
   const [showApiSettings, setShowApiSettings] = useState(false);
   const [aiModeDraft, setAiModeDraft] = useState('pi');
+  const [piModelDraft, setPiModelDraft] = useState('gpt-5.6-sol');
+  const [piThinkingDraft, setPiThinkingDraft] = useState('high');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [apiEndpointDraft, setApiEndpointDraft] = useState('https://api.openai.com/v1');
   const [apiModelDraft, setApiModelDraft] = useState('gpt-4o-mini');
@@ -144,6 +158,8 @@ function App() {
     try {
       const payload = {
         aiMode: aiModeDraft,
+        piModel: piModelDraft,
+        piThinking: piThinkingDraft,
         apiEndpoint: apiEndpointDraft,
         apiModel: apiModelDraft,
         onboardingComplete: true,
@@ -154,7 +170,7 @@ function App() {
       setApiKeyDraft('');
       setShowAiOnboarding(false);
       setShowApiSettings(false);
-      if (aiModeDraft === 'pi') await window.electronAPI.openPiLogin();
+      if (aiModeDraft === 'pi' && !piStatus?.authConfigured) await window.electronAPI.openPiLogin();
       setTimeout(() => window.location.reload(), 1500);
     } catch (error) {
       setConfigError(error.message || String(error));
@@ -261,6 +277,8 @@ function App() {
       window.electronAPI.getAppConfig().then(config => {
         setAppConfig(config);
         setAiModeDraft(config.aiMode === 'none' ? 'pi' : config.aiMode);
+        setPiModelDraft(config.piModel || 'gpt-5.6-sol');
+        setPiThinkingDraft(config.piThinking || 'high');
         setApiEndpointDraft(config.apiEndpoint || 'https://api.openai.com/v1');
         setApiModelDraft(config.apiModel || 'gpt-4o-mini');
         if (!config.onboardingComplete) {
@@ -1522,6 +1540,28 @@ function App() {
                   <div>{piStatus.available ? '✅' : '❌'} Pi Coding Agent {piStatus.version || ''}</div>
                   <div>{piStatus.authConfigured ? '✅ Авторизация ChatGPT найдена' : '⚠️ Требуется /login → ChatGPT Plus/Pro (Codex)'}</div>
                   <div>Модель: {piStatus.provider || 'openai-codex'}/{piStatus.model || 'gpt-5.6-sol'} · thinking {piStatus.thinking || 'high'}</div>
+                </div>
+              )}
+
+              {aiModeDraft === 'pi' && (
+                <div className="space-y-2 mb-4">
+                  <label className="block text-xs font-medium text-gray-600">Модель Pi</label>
+                  <select
+                    value={piModelDraft}
+                    onChange={e => setPiModelDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono bg-white"
+                  >
+                    {PI_MODELS.map(model => <option key={model} value={model}>{model}</option>)}
+                  </select>
+                  <label className="block text-xs font-medium text-gray-600">Глубина рассуждения</label>
+                  <select
+                    value={piThinkingDraft}
+                    onChange={e => setPiThinkingDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono bg-white"
+                  >
+                    {PI_THINKING_LEVELS.map(level => <option key={level} value={level}>{level}</option>)}
+                  </select>
+                  <p className="text-xs text-gray-500">Настройка применяется к автоматическому AI-анализу после сохранения.</p>
                 </div>
               )}
 

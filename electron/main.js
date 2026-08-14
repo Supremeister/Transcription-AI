@@ -9,7 +9,8 @@ let gigaamProcess = null;
 let backendProcess = null;
 let botProcess = null;
 let botUsername = null;
-const USER_CONFIG_VERSION = 1;
+const USER_CONFIG_VERSION = 2;
+const PI_THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 
 const IS_PROD = app.isPackaged;
 const APP_PATH = app.getAppPath();
@@ -56,6 +57,8 @@ function readUserConfig() {
     version: USER_CONFIG_VERSION,
     onboardingComplete: false,
     aiMode: 'none',
+    piModel: 'gpt-5.6-sol',
+    piThinking: 'high',
     apiEndpoint: 'https://api.openai.com/v1',
     apiModel: 'gpt-4o-mini',
     apiKeyEncrypted: null,
@@ -118,6 +121,8 @@ function publicUserConfig() {
   return {
     onboardingComplete: Boolean(config.onboardingComplete),
     aiMode: config.aiMode,
+    piModel: config.piModel,
+    piThinking: config.piThinking,
     apiEndpoint: config.apiEndpoint,
     apiModel: config.apiModel,
     apiKeyConfigured: Boolean(decryptSecret(config.apiKeyEncrypted)),
@@ -270,7 +275,11 @@ function startBackend() {
   const hfToken = loadHfToken();
   const backendEnv = stripUnsupportedProxyEnv(process.env);
   backendEnv.GIGAAM_SERVICE_PORT = loadGigaAmPort();
+  backendEnv.APP_USER_DATA = app.getPath('userData');
   backendEnv.AI_PROVIDER_MODE = userConfig.aiMode || 'none';
+  backendEnv.PI_ANALYSIS_PROVIDER = 'openai-codex';
+  backendEnv.PI_ANALYSIS_MODEL = userConfig.piModel || 'gpt-5.6-sol';
+  backendEnv.PI_ANALYSIS_THINKING = userConfig.piThinking || 'high';
   backendEnv.CUSTOM_API_ENDPOINT = userConfig.apiEndpoint || 'https://api.openai.com/v1';
   backendEnv.CUSTOM_API_MODEL = userConfig.apiModel || 'gpt-4o-mini';
   backendEnv.CUSTOM_API_KEY = customApiKey;
@@ -406,6 +415,20 @@ ipcMain.handle('save-app-config', async (_event, input = {}) => {
     }
     next.aiMode = input.aiMode;
   }
+  if (input.piModel !== undefined) {
+    const model = String(input.piModel).trim();
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(model)) {
+      throw new Error('Некорректное название модели Pi');
+    }
+    next.piModel = model;
+  }
+  if (input.piThinking !== undefined) {
+    const thinking = String(input.piThinking).trim();
+    if (!PI_THINKING_LEVELS.has(thinking)) {
+      throw new Error('Некорректный уровень thinking Pi');
+    }
+    next.piThinking = thinking;
+  }
   if (input.apiEndpoint !== undefined) {
     const endpoint = String(input.apiEndpoint).trim().replace(/\/$/, '');
     const parsed = new URL(endpoint);
@@ -456,7 +479,8 @@ ipcMain.handle('open-pi-login', () => {
   const nodeBin = IS_PROD
     ? path.join(RESOURCES, 'node.exe')
     : (fs.existsSync(developmentNode) ? developmentNode : 'node');
-  const command = `title Pi Login && "${nodeBin}" "${cliPath}"`;
+  const config = readUserConfig();
+  const command = `title Pi Login && "${nodeBin}" "${cliPath}" --provider openai-codex --model "${config.piModel}" --thinking "${config.piThinking}"`;
   const loginProcess = spawn('cmd.exe', ['/k', command], {
     detached: true,
     stdio: 'ignore',
