@@ -16,15 +16,39 @@ from telegram.error import BadRequest as TgBadRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('telegram').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Конфиг
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 BACKEND = os.getenv('TRANSCRIBER_BACKEND', 'http://localhost:3000')
-DEFAULT_LANGUAGE = 'ru'
 
 if not BOT_TOKEN:
     raise RuntimeError('Укажи TELEGRAM_BOT_TOKEN в .env или переменных окружения')
+
+
+def format_timestamp(seconds):
+    total = max(0, int(float(seconds or 0)))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f'{hours:02d}:{minutes:02d}:{secs:02d}'
+    return f'{minutes:02d}:{secs:02d}'
+
+
+def format_segments(segments):
+    blocks = []
+    for segment in segments or []:
+        start = format_timestamp(segment.get('start'))
+        end = format_timestamp(segment.get('end'))
+        speaker = segment.get('speaker') or 'Речь'
+        overlap = ' · наложение речи' if segment.get('has_overlap') else ''
+        blocks.append(
+            f'[{start}–{end}] {speaker}{overlap}:\n'
+            f'{segment.get("text", "").strip()}'
+        )
+    return '\n\n'.join(block for block in blocks if block.strip())
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -34,6 +58,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🎤 Голосовое сообщение\n"
         "• 🎵 Аудиофайл (MP3, M4A, WAV и др.)\n"
         "• 🎥 Видеофайл (MP4, MOV и др.)\n\n"
+        "Распознавание работает на русском языке.\n"
         "Получишь текст + AI анализ разговора."
     )
 
@@ -43,13 +68,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ℹ️ Команды:\n"
         "/start — приветствие\n"
         "/help — эта справка\n\n"
-        "Для смены языка добавь в подпись к файлу: en (для английского)\n"
-        "По умолчанию: русский"
+        "Транскрибация выполняется локальной моделью GigaAM-v3 RNNT.\n"
+        "Поддерживается русская речь."
     )
 
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
+    tmp_path = None
 
     # Определяем тип и получаем file_id
     MAX_SIZE = 20 * 1024 * 1024  # 20 МБ — лимит Telegram Bot API
@@ -88,10 +114,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tg_file = await media_obj.get_file()
 
-    # Язык из подписи
-    caption = (msg.caption or '').strip().lower()
-    language = 'en' if 'en' in caption else DEFAULT_LANGUAGE
-
     status_msg = await msg.reply_text("⏳ Транскрибируем...")
 
     try:
@@ -106,7 +128,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(tmp_path, 'rb') as f:
                 form = aiohttp.FormData()
                 form.add_field('audio', f, filename=filename)
-                form.add_field('language', language)
 
                 async with session.post(
                     f'{BACKEND}/api/transcribe',
@@ -118,11 +139,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result.get('success'):
             transcript = result.get('transcript', '').strip()
             if not transcript:
-                await status_msg.edit_text("⚠️ Речь не обнаружена. Проверь аудио или смени язык.")
+                await status_msg.edit_text("⚠️ Русская речь не обнаружена. Проверь качество аудио.")
                 return
 
-            # Формируем ответ
-            reply = f"📝 *Транскрипция:*\n\n{transcript}"
+            # Формируем ответ с теми же тайм-кодами и спикерами, что в приложении.
+            timed_transcript = format_segments(result.get('segments')) or transcript
+            reply = f"📝 Транскрипция:\n\n{timed_transcript}"
 
             # AI анализ
             async with aiohttp.ClientSession() as session:
@@ -137,13 +159,13 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ai_data = await resp.json()
 
             if ai_data.get('success') and ai_data.get('result'):
-                reply += f"\n\n🤖 *AI Анализ:*\n\n{ai_data['result']}"
+                reply += f"\n\n🤖 AI Анализ:\n\n{ai_data['result']}"
 
             # Telegram ограничение — 4096 символов
             if len(reply) > 4096:
-                await status_msg.edit_text(reply[:4090] + "...", parse_mode='Markdown')
+                await status_msg.edit_text(reply[:4090] + "...")
             else:
-                await status_msg.edit_text(reply, parse_mode='Markdown')
+                await status_msg.edit_text(reply)
         else:
             error = result.get('error', 'неизвестная ошибка')
             await status_msg.edit_text(f"❌ Ошибка транскрибации: {error}")
@@ -166,7 +188,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"❌ Ошибка: {e}")
     finally:
         try:
-            os.unlink(tmp_path)
+            if tmp_path:
+                os.unlink(tmp_path)
         except Exception:
             pass
 

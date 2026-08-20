@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3000;
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
+  skip: (req) => req.method === 'GET' && req.path.endsWith('/health'),
   message: { error: 'Слишком много запросов. Подождите минуту.' }
 });
 
@@ -20,8 +21,8 @@ const limiter = rateLimit({
 app.use(helmet());
 app.use(cors({ origin: true })); // разрешаем все — Electron открывает через file://
 app.use(morgan('dev'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 app.use('/api/', limiter);
 
 // Health Check
@@ -37,6 +38,7 @@ app.get('/health', (req, res) => {
 app.use('/api/transcribe', require('./routes/transcribe'));
 app.use('/api/analyze', require('./routes/analyze'));
 app.use('/api/diarize', require('./routes/diarize_setup'));
+app.use('/api/agent', require('./routes/agent'));
 
 // 404 Handler
 app.use((req, res) => {
@@ -49,9 +51,9 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.log(`✓ Сервер запущен: http://localhost:${PORT}`);
-  console.log(`✓ Запустите Whisper сервис: python backend/whisper_service.py`);
+  console.log(`✓ ASR: GigaAM v3 RNNT · диаризация: Community-1`);
 });
 
 module.exports = app;

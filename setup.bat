@@ -6,16 +6,16 @@ echo   Транскрибатор — Установка зависимосте�
 echo ============================================
 echo.
 
-:: ─── Ищем Python ─────────────────────────────────────────────────────────────
+:: ─── Ищем Python 3.12 ────────────────────────────────────────────────────────
 set PYTHON=
 for %%p in (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     "C:\Program Files\Python312\python.exe"
+    "C:\Python312\python.exe"
     "C:\Program Files\Python311\python.exe"
     "C:\Program Files\Python310\python.exe"
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
-    "C:\Python312\python.exe"
     "C:\Python311\python.exe"
     "C:\Python310\python.exe"
 ) do (
@@ -25,19 +25,19 @@ for %%p in (
     )
 )
 
-python --version >nul 2>&1
+python -c "import sys; exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 12) else 1)" >nul 2>&1
 if %errorlevel% == 0 (
     set PYTHON=python
     goto :found_python
 )
 
 :: ─── Python не найден — скачиваем и устанавливаем автоматически ──────────────
-echo [!] Python не найден. Устанавливаем Python 3.11 автоматически...
+echo [!] Совместимый Python не найден. Устанавливаем Python 3.12 автоматически...
 echo     (потребуется ~25 МБ и несколько минут)
 echo.
 
-set PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
-set PY_INSTALLER=%TEMP%\python_installer.exe
+set PY_URL=https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
+set PY_INSTALLER=%TEMP%\transcriptor_python312_installer.exe
 
 echo Скачиваем Python...
 powershell -NoProfile -Command "Invoke-WebRequest -Uri '%PY_URL%' -OutFile '%PY_INSTALLER%' -UseBasicParsing"
@@ -47,8 +47,8 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo Устанавливаем Python для всех пользователей...
-"%PY_INSTALLER%" /quiet InstallAllUsers=1 PrependPath=1 Include_launcher=0
+echo Устанавливаем Python 3.12 для текущего пользователя...
+"%PY_INSTALLER%" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=0
 if %errorlevel% neq 0 (
     echo [ОШИБКА] Установка Python завершилась с ошибкой.
     pause
@@ -56,13 +56,11 @@ if %errorlevel% neq 0 (
 )
 del "%PY_INSTALLER%" >nul 2>&1
 
-:: Обновляем PATH в текущей сессии
-for /f "tokens=*" %%i in ('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set "PATH=%%i;%PATH%"
-
 :: Ищем Python после установки
 for %%p in (
-    "C:\Program Files\Python311\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     "C:\Program Files\Python312\python.exe"
+    "C:\Python312\python.exe"
 ) do (
     if exist %%p (
         set PYTHON=%%p
@@ -72,85 +70,98 @@ for %%p in (
     )
 )
 
-python --version >nul 2>&1
-if %errorlevel% == 0 (
-    set PYTHON=python
-    echo [OK] Python установлен успешно!
-    echo.
-    goto :found_python
-)
-
 echo [ОШИБКА] Python установлен, но не найден. Перезапустите этот скрипт.
 pause
 exit /b 1
 
 :found_python
 echo [OK] Python: %PYTHON%
+%PYTHON% --version
 echo.
 
-:: ─── CUDA / GPU ──────────────────────────────────────────────────────────────
-echo.
-echo У вас есть видеокарта NVIDIA (GeForce, RTX, GTX)?
-echo GPU-ускорение в 3-10 раз быстрее CPU, но потребует ~1.5 ГБ загрузки.
-echo.
-set /p CUDA_CHOICE="Установить GPU-ускорение (CUDA)? [Y/N]: "
-if /i "!CUDA_CHOICE!"=="Y" (
-    echo.
-    %PYTHON% -c "import torch; exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1
-    if !errorlevel! == 0 (
-        echo [OK] CUDA уже активна — GPU-ускорение работает.
-        echo.
-    ) else (
-        echo Устанавливаем torch с CUDA 12.1...
-        echo (Это займёт 5-15 минут^)
-        echo.
-        %PYTHON% -m pip install --upgrade pip --quiet
-        %PYTHON% -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121 --quiet
-        if !errorlevel! == 0 (
-            echo [OK] CUDA torch установлен! GPU-ускорение активно.
-        ) else (
-            echo [WARN] Не удалось установить CUDA torch. Whisper продолжит работать на CPU.
-        )
-        echo.
-    )
-) else (
-    echo [INFO] Whisper будет работать на CPU.
-    echo.
+:: ─── Базовые инструменты ─────────────────────────────────────────────────────
+%PYTHON% -m pip install --upgrade pip setuptools wheel --quiet
+if %errorlevel% neq 0 (
+    echo [ОШИБКА] Не удалось обновить pip.
+    pause
+    exit /b 1
 )
 
-:: ─── pyannote.audio ──────────────────────────────────────────────────────────
-:pyannote_section
-echo Проверяем pyannote.audio...
-%PYTHON% -c "import pyannote.audio" >nul 2>&1
+:: ─── Torch: существующую CUDA-сборку никогда не заменяем CPU-сборкой ─────────
+echo Проверяем PyTorch...
+%PYTHON% -c "import torch; print('[OK] PyTorch', torch.__version__, '| CUDA:', torch.cuda.is_available())" >nul 2>&1
 if %errorlevel% == 0 (
-    echo [OK] pyannote.audio уже установлен!
-    goto :done
+    %PYTHON% -c "import torch; print('[OK] Сохраняем установленный PyTorch', torch.__version__, '| CUDA:', torch.cuda.is_available())"
+) else (
+    where nvidia-smi >nul 2>&1
+    if !errorlevel! == 0 (
+        echo Найдена NVIDIA GPU. Устанавливаем PyTorch 2.6 с CUDA 12.4...
+        %PYTHON% -m pip install "torch==2.6.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu124 --quiet
+    ) else (
+        echo NVIDIA GPU не найдена. Устанавливаем PyTorch 2.6 для CPU...
+        %PYTHON% -m pip install "torch==2.6.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cpu --quiet
+    )
+    if !errorlevel! neq 0 (
+        echo [ОШИБКА] Не удалось установить PyTorch.
+        pause
+        exit /b 1
+    )
 )
 
+:: ─── GigaAM-v3 RNNT ─────────────────────────────────────────────────────────
 echo.
-echo Устанавливаем pyannote.audio (CPU-версия, ~400 МБ)...
-echo Это займет 5-10 минут в зависимости от скорости интернета.
-echo.
-
-%PYTHON% -m pip install --upgrade pip --quiet
-
-%PYTHON% -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
+echo Устанавливаем официальную GigaAM (ревизия 559d88d)...
+set "GIGAAM_ZIP=https://github.com/salute-developers/GigaAM/archive/559d88d6b72541412743929f633a6ae7c9950b85.zip"
+%PYTHON% -m pip install --upgrade "%GIGAAM_ZIP%" flask --quiet
 if %errorlevel% neq 0 (
-    echo [ОШИБКА] Не удалось установить torch
+    echo [ОШИБКА] Не удалось установить GigaAM.
     pause
     exit /b 1
 )
 
-%PYTHON% -m pip install pyannote.audio --quiet
+:: ─── RUPunct, Community-1 и безопасное декодирование через PyAV ──────────────
+echo.
+echo Устанавливаем RUPunct/Transformers и зависимости pyannote.audio Community-1...
+%PYTHON% -m pip install ^
+    "asteroid-filterbanks>=0.4.0" ^
+    "einops>=0.8.1" ^
+    "huggingface-hub>=0.28.1" ^
+    "lightning>=2.4" ^
+    "matplotlib>=3.10.0" ^
+    "numba>=0.62" ^
+    "opentelemetry-api>=1.34.0" ^
+    "opentelemetry-exporter-otlp>=1.34.0" ^
+    "opentelemetry-sdk>=1.34.0" ^
+    "pyannote-core>=6.0.1" ^
+    "pyannote-database>=6.1.1" ^
+    "pyannote-metrics>=4.0.0" ^
+    "pyannote-pipeline>=4.0.0" ^
+    "pyannoteai-sdk>=0.3.0" ^
+    "pytorch-metric-learning>=2.8.1" ^
+    "rich>=13.9.4" ^
+    "safetensors>=0.5.2" ^
+    "torch-audiomentations>=0.12.0" ^
+    "torchcodec>=0.7.0" ^
+    "torchmetrics>=1.6.1" ^
+    "transformers==4.57.6" ^
+    --quiet
 if %errorlevel% neq 0 (
-    echo [ОШИБКА] Не удалось установить pyannote.audio
+    echo [ОШИБКА] Не удалось установить зависимости Community-1.
     pause
     exit /b 1
 )
 
-%PYTHON% -c "import pyannote.audio; print('[OK] pyannote.audio установлен успешно!')"
+:: --no-deps намеренно: pyannote не должен заменить уже проверенную CUDA-сборку torch.
+%PYTHON% -m pip install --no-deps "pyannote.audio==4.0.4" av --quiet
 if %errorlevel% neq 0 (
-    echo [ОШИБКА] Установка прошла, но импорт не работает. Попробуйте перезапустить.
+    echo [ОШИБКА] Не удалось установить pyannote.audio 4.x / av.
+    pause
+    exit /b 1
+)
+
+%PYTHON% -c "import av, flask, gigaam, torch, transformers; import pyannote.audio; print('[OK] GigaAM + RUPunct + Community-1 готовы | CUDA:', torch.cuda.is_available())"
+if %errorlevel% neq 0 (
+    echo [ОШИБКА] Пакеты установлены, но проверка импорта не прошла.
     pause
     exit /b 1
 )
@@ -159,10 +170,12 @@ if %errorlevel% neq 0 (
 echo.
 echo ============================================
 echo   Всё установлено! Запустите Транскрибатор.
-echo   Для диаризации (разделение по спикерам):
+echo   Распознавание: GigaAM-v3 RNNT, только русский язык.
+echo   Для Community-1 (разделение по спикерам):
 echo   - Откройте Настройки в приложении
 echo   - Введите HuggingFace токен
 echo     (получить: huggingface.co/settings/tokens)
+echo   При первом запуске загрузятся модели примерно на 500 МБ.
 echo ============================================
 echo.
 pause

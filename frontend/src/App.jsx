@@ -5,55 +5,181 @@ const BACKEND = 'http://localhost:3000';
 
 const AI_ANALYSIS_ENABLED = true;
 
+const PI_MODELS = [
+  'gpt-5.3-codex-spark',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.5',
+  'gpt-5.6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+];
+
+const PI_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+const KNOWLEDGE_KIND_LABELS = {
+  fact: 'Факт',
+  metric: 'Метрика',
+  decision: 'Решение',
+  principle: 'Принцип',
+  process: 'Процесс',
+  script: 'Скрипт',
+  risk: 'Риск',
+  open_question: 'Открытый вопрос',
+};
+
+const KNOWLEDGE_STATUS_LABELS = {
+  direct: 'Прямо сказано',
+  inferred: 'Следует из контекста',
+  needs_confirmation: 'Требует подтверждения',
+  asr_risk: 'ASR-риск',
+};
+
+const SPEAKER_STYLES = [
+  { block: 'border-blue-200 bg-blue-50', label: 'text-blue-700', text: 'text-blue-900' },
+  { block: 'border-orange-200 bg-orange-50', label: 'text-orange-700', text: 'text-orange-900' },
+  { block: 'border-emerald-200 bg-emerald-50', label: 'text-emerald-700', text: 'text-emerald-900' },
+  { block: 'border-purple-200 bg-purple-50', label: 'text-purple-700', text: 'text-purple-900' },
+  { block: 'border-pink-200 bg-pink-50', label: 'text-pink-700', text: 'text-pink-900' },
+  { block: 'border-cyan-200 bg-cyan-50', label: 'text-cyan-700', text: 'text-cyan-900' },
+];
+
+const formatTimestamp = (seconds, precise = false) => {
+  const value = Number(seconds);
+  if (!Number.isFinite(value)) return null;
+  const totalTenths = Math.max(0, Math.round(value * 10));
+  const totalSeconds = precise
+    ? Math.floor(totalTenths / 10)
+    : Math.floor(value);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  const secondsLabel = precise
+    ? `${String(secs).padStart(2, '0')}.${totalTenths % 10}`
+    : String(secs).padStart(2, '0');
+  return hours > 0
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${secondsLabel}`
+    : `${String(minutes).padStart(2, '0')}:${secondsLabel}`;
+};
+
+const getSegmentTimeLabel = (segment) => {
+  const startValue = Number(segment?.start);
+  const endValue = Number(segment?.end);
+  const precise = (
+    Number.isFinite(startValue)
+    && Number.isFinite(endValue)
+    && endValue > startValue
+    && Math.floor(startValue) === Math.floor(endValue)
+  );
+  const start = formatTimestamp(startValue, precise);
+  const end = formatTimestamp(endValue, precise);
+  return start && end ? `[${start}–${end}]` : '';
+};
+
+const formatSegmentsForExport = (items) => items
+  .map((segment) => {
+    const timestamp = getSegmentTimeLabel(segment);
+    const overlapSeconds = Number(segment.overlap_seconds);
+    const overlap = segment.has_overlap
+      ? ` ⚠ заметное наложение${Number.isFinite(overlapSeconds) ? ` ~${overlapSeconds.toFixed(1)} с` : ''}`
+      : '';
+    const prefix = [timestamp, segment.speaker || 'Речь'].filter(Boolean).join(' ');
+    return `${prefix}${overlap}:\n${segment.text}`;
+  })
+  .join('\n\n');
+
 function App() {
   const [backendReady, setBackendReady] = useState(false);
-  const [whisperReady, setWhisperReady] = useState(false);
+  const [asrReady, setAsrReady] = useState(false);
+  const [asrStartupError, setAsrStartupError] = useState('');
   const [loading, setLoading] = useState(true);
   const [audioFile, setAudioFile] = useState(null);
   const [transcribing, setTranscribing] = useState(false);
   const [status, setStatus] = useState('');
   const [transcript, setTranscript] = useState('');
   const [segments, setSegments] = useState([]); // speaker diarization blocks
-  const [language, setLanguage] = useState('ru');
+  const [overlaps, setOverlaps] = useState([]);
+  const [diarizationNotice, setDiarizationNotice] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [lastElapsed, setLastElapsed] = useState(null); // итоговое время последней транскрипции
-  const [whisperDevice, setWhisperDevice] = useState(null); // 'cuda' | 'cpu'
-  const [whisperModel, setWhisperModel] = useState(null);
+  const [asrDevice, setAsrDevice] = useState(null); // 'cuda' | 'cpu'
+  const [asrModel, setAsrModel] = useState(null);
+  const [diarizationModel, setDiarizationModel] = useState(null);
+  const [diarizationReady, setDiarizationReady] = useState(false);
 
   // AI состояние
   const [ollamaReady, setOllamaReady] = useState(false);
-  const [aiProvider, setAiProvider] = useState('none'); // 'groq' | 'ollama' | 'none'
+  const [aiProvider, setAiProvider] = useState('none'); // 'pi' | 'custom-api' | 'none'
+  const [aiModel, setAiModel] = useState(null);
+  const [piStatus, setPiStatus] = useState(null);
   const [botUsername, setBotUsername] = useState(null);
   const [analyzing, setAnalyzing] = useState(null); // 'correct' | 'tasks' | 'keypoints' | null
   const [aiResults, setAiResults] = useState({ correct: null, tasks: null, keypoints: null });
   const [aiError, setAiError] = useState('');
   const [analyzeElapsed, setAnalyzeElapsed] = useState(0);
+  const [obsidianStatus, setObsidianStatus] = useState(null);
+  const [contextProject, setContextProject] = useState(
+    () => localStorage.getItem('contextProject') || ''
+  );
+  const [agentContext, setAgentContext] = useState(null);
+  const [transcriptArchive, setTranscriptArchive] = useState(null);
+  const [transcriptArchiveError, setTranscriptArchiveError] = useState('');
+  const [taskProposals, setTaskProposals] = useState([]);
+  const [proposalDrafts, setProposalDrafts] = useState({});
+  const [proposalBusy, setProposalBusy] = useState(null);
+  const [transcriptTopic, setTranscriptTopic] = useState('');
+  const [analysisSummary, setAnalysisSummary] = useState('');
+  const [keyKnowledge, setKeyKnowledge] = useState([]);
+  const [extractionMetrics, setExtractionMetrics] = useState(null);
   const [setupInProgress, setSetupInProgress] = useState(false);
   const [setupProgress, setSetupProgress] = useState({ msg: '', pct: 0 });
   const [updateAvailable, setUpdateAvailable] = useState(null); // {version}
   const [updateReady, setUpdateReady] = useState(null); // {version}
-  const [showAiOnboarding, setShowAiOnboarding] = useState(
-    () => !localStorage.getItem('aiOnboardingDismissed')
-  );
+  const [showAiOnboarding, setShowAiOnboarding] = useState(false);
+  const [appConfig, setAppConfig] = useState(null);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configError, setConfigError] = useState('');
 
   // API настройки
   const [showApiSettings, setShowApiSettings] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('apiKey') || '');
-  const [apiEndpoint, setApiEndpoint] = useState(() => localStorage.getItem('apiEndpoint') || 'https://api.openai.com/v1');
-  const [apiModel, setApiModel] = useState(() => localStorage.getItem('apiModel') || 'gpt-4o-mini');
+  const [aiModeDraft, setAiModeDraft] = useState('pi');
+  const [piModelDraft, setPiModelDraft] = useState('gpt-5.6-sol');
+  const [piThinkingDraft, setPiThinkingDraft] = useState('high');
+  const [apiKeyDraft, setApiKeyDraft] = useState('');
+  const [apiEndpointDraft, setApiEndpointDraft] = useState('https://api.openai.com/v1');
+  const [apiModelDraft, setApiModelDraft] = useState('gpt-4o-mini');
 
-  const saveApiSettings = () => {
-    localStorage.setItem('apiKey', apiKey);
-    localStorage.setItem('apiEndpoint', apiEndpoint);
-    localStorage.setItem('apiModel', apiModel);
-    setShowApiSettings(false);
+  const saveAgentSettings = async () => {
+    if (!window.electronAPI?.saveAppConfig) return;
+    setConfigSaving(true);
+    setConfigError('');
+    try {
+      const payload = {
+        aiMode: aiModeDraft,
+        piModel: piModelDraft,
+        piThinking: piThinkingDraft,
+        apiEndpoint: apiEndpointDraft,
+        apiModel: apiModelDraft,
+        onboardingComplete: true,
+      };
+      if (aiModeDraft === 'custom-api' && apiKeyDraft) payload.apiKey = apiKeyDraft;
+      const saved = await window.electronAPI.saveAppConfig(payload);
+      setAppConfig(saved);
+      setApiKeyDraft('');
+      setShowAiOnboarding(false);
+      setShowApiSettings(false);
+      if (aiModeDraft === 'pi' && !piStatus?.authConfigured) await window.electronAPI.openPiLogin();
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (error) {
+      setConfigError(error.message || String(error));
+    } finally {
+      setConfigSaving(false);
+    }
   };
 
   // Диаризация — настройки
-  const [modelDownload, setModelDownload] = useState(null); // {pct, done, total}
-
   const [diarizeStatus, setDiarizeStatus] = useState(null); // {python, pyannote, hfToken, ready}
   const [hfTokenDraft, setHfTokenDraft] = useState('');
   const [hfTokenSaved, setHfTokenSaved] = useState(false);
@@ -72,15 +198,14 @@ function App() {
   const saveHfToken = async () => {
     if (!hfTokenDraft.startsWith('hf_')) return;
     try {
-      await fetch(`${BACKEND}/api/diarize/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: hfTokenDraft })
-      });
+      const saved = await window.electronAPI.saveAppConfig({ hfToken: hfTokenDraft });
+      setAppConfig(saved);
+      setHfTokenDraft('');
       setHfTokenSaved(true);
-      setTimeout(() => setHfTokenSaved(false), 2000);
-      checkDiarizeStatus();
-    } catch {}
+      setTimeout(() => window.location.reload(), 1800);
+    } catch (error) {
+      setConfigError(error.message || String(error));
+    }
   };
 
   const installDiarize = async () => {
@@ -112,6 +237,21 @@ function App() {
   // Тип диалога
   const [dialogType, setDialogType] = useState(() => localStorage.getItem('dialogType') || 'client');
   const setAndSaveDialogType = (type) => { setDialogType(type); localStorage.setItem('dialogType', type); };
+  const setAndSaveContextProject = (projectId) => {
+    setContextProject(projectId);
+    if (projectId) localStorage.setItem('contextProject', projectId);
+    else localStorage.removeItem('contextProject');
+  };
+
+  // Количество спикеров для Community-1
+  const [speakerMode, setSpeakerMode] = useState(() => {
+    const saved = localStorage.getItem('speakerMode') || '2';
+    return ['auto', '2', '3', '4+'].includes(saved) ? saved : '2';
+  });
+  const setAndSaveSpeakerMode = (mode) => {
+    setSpeakerMode(mode);
+    localStorage.setItem('speakerMode', mode);
+  };
 
   // Профиль пользователя
   const [userProfile, setUserProfile] = useState(() => localStorage.getItem('userProfile') || '');
@@ -129,14 +269,23 @@ function App() {
     localStorage.setItem('analysisHistory', JSON.stringify(history.slice(0, 10)));
   };
 
-  const useApiMode = !!apiKey;
-
   useEffect(() => {
-    if (window.electronAPI?.onModelDownloadProgress) {
-      window.electronAPI.onModelDownloadProgress((data) => {
-        setModelDownload(data);
-        if (data.pct >= 100) setTimeout(() => setModelDownload(null), 2000);
-      });
+    localStorage.removeItem('apiKey');
+    localStorage.removeItem('apiEndpoint');
+    localStorage.removeItem('apiModel');
+    if (window.electronAPI?.getAppConfig) {
+      window.electronAPI.getAppConfig().then(config => {
+        setAppConfig(config);
+        setAiModeDraft(config.aiMode === 'none' ? 'pi' : config.aiMode);
+        setPiModelDraft(config.piModel || 'gpt-5.6-sol');
+        setPiThinkingDraft(config.piThinking || 'high');
+        setApiEndpointDraft(config.apiEndpoint || 'https://api.openai.com/v1');
+        setApiModelDraft(config.apiModel || 'gpt-4o-mini');
+        if (!config.onboardingComplete) {
+          setShowAiOnboarding(true);
+          setShowApiSettings(true);
+        }
+      }).catch(error => setConfigError(error.message || String(error)));
     }
     if (window.electronAPI?.getBotUsername) {
       window.electronAPI.getBotUsername().then(u => { if (u) setBotUsername(u); });
@@ -156,10 +305,26 @@ function App() {
         const res = await fetch(`${BACKEND}/health`);
         setBackendReady(res.ok);
         if (res.ok) {
-          const aiRes = await fetch(`${BACKEND}/api/analyze/health`);
-          const aiData = await aiRes.json();
-          setOllamaReady(aiData.hasModel);
-          setAiProvider(aiData.provider || 'none');
+           const [aiRes, agentRes] = await Promise.all([
+             fetch(`${BACKEND}/api/analyze/health`),
+             fetch(`${BACKEND}/api/agent/health`),
+           ]);
+           const aiData = await aiRes.json();
+           setOllamaReady(aiData.hasModel);
+           setAiProvider(aiData.provider || 'none');
+           setAiModel(aiData.model || null);
+           setPiStatus(aiData.pi || null);
+           if (agentRes.ok) {
+             const agentData = await agentRes.json();
+             setObsidianStatus(agentData);
+             const savedProjectExists = agentData.projects?.some(
+               project => project.id === contextProject
+             );
+             if (contextProject && !savedProjectExists) {
+               setContextProject('');
+               localStorage.removeItem('contextProject');
+             }
+           }
         }
       } catch {
         setBackendReady(false);
@@ -170,7 +335,7 @@ function App() {
     checkHealth();
   }, []);
 
-  // Поллинг Whisper до готовности
+  // Поллинг GigaAM до готовности
   useEffect(() => {
     if (!backendReady) return;
     const poll = async () => {
@@ -178,9 +343,16 @@ function App() {
         const res = await fetch(`${BACKEND}/api/transcribe/health`);
         const data = await res.json();
         if (data.status === 'ok') {
-          setWhisperReady(true);
-          setWhisperDevice(data.whisper?.device || null);
-          setWhisperModel(data.whisper?.model || null);
+          setAsrReady(true);
+          setAsrStartupError('');
+          setAsrDevice(data.asr?.device || null);
+          setAsrModel(data.asr?.model || 'GigaAM-v3-RNNT');
+          setDiarizationModel(data.asr?.diarization_model || null);
+          setDiarizationReady(Boolean(data.asr?.diarization));
+          return;
+        }
+        if (data.code === 'GIGAAM_PORT_CONFLICT') {
+          setAsrStartupError(data.asr?.error || 'Порт GigaAM занят другим приложением');
           return;
         }
       } catch {}
@@ -203,8 +375,19 @@ function App() {
     setError('');
     setTranscript('');
     setSegments([]);
+    setOverlaps([]);
+    setDiarizationNotice('');
     setStatus('');
     setAiResults({ correct: null, tasks: null, keypoints: null });
+    setAgentContext(null);
+    setTranscriptArchive(null);
+    setTranscriptArchiveError('');
+    setTaskProposals([]);
+    setProposalDrafts({});
+    setTranscriptTopic('');
+    setAnalysisSummary('');
+    setKeyKnowledge([]);
+    setExtractionMetrics(null);
   };
 
   const handleDrop = (e) => {
@@ -232,16 +415,38 @@ function App() {
         body: JSON.stringify({
           transcript: text,
           action,
-          apiKey: apiKey || undefined,
-          apiEndpoint: apiEndpoint || undefined,
-          apiModel: apiModel || undefined,
           userContext: userProfile || undefined,
           history: history.length ? history : undefined,
+          preferredProject: contextProject || undefined,
+          sourceFilename: audioFile?.name || undefined,
+          speakersCount: segments.length > 0
+            ? new Set(segments.map(segment => segment.speaker).filter(Boolean)).size
+            : undefined,
         })
       });
       const data = await response.json();
+      if (data.transcriptArchive) setTranscriptArchive(data.transcriptArchive);
+      setTranscriptArchiveError(data.transcriptArchiveError || '');
       if (data.success) {
         setAiResults(prev => ({ ...prev, full: data.result }));
+        if (data.provider) setAiProvider(data.provider);
+        if (data.model) setAiModel(data.model);
+        if (data.agentContext) setAgentContext(data.agentContext);
+        setTranscriptTopic(data.topic || '');
+        setAnalysisSummary(data.summary || '');
+        setKeyKnowledge(Array.isArray(data.knowledge) ? data.knowledge : []);
+        setExtractionMetrics(data.extractionMetrics || null);
+        if (Array.isArray(data.proposals)) {
+          setTaskProposals(data.proposals);
+          setProposalDrafts(Object.fromEntries(data.proposals.map(proposal => [
+            proposal.id,
+            {
+              task: proposal.task,
+              projectId: proposal.projectId || '',
+              due: proposal.due || '',
+            },
+          ])));
+        }
         addToHistory(audioFile?.name, data.result);
       } else {
         setAiError(data.error || 'Ошибка AI анализа');
@@ -259,14 +464,33 @@ function App() {
     { value: 'own', label: 'Своё', desc: 'Задачи, ключевые выводы, зоны роста — без шаблона' },
   ];
 
+  const SPEAKER_MODES = [
+    { value: 'auto', label: 'Авто', desc: 'Community-1 определит число спикеров' },
+    { value: '2', label: '2', desc: 'Ровно два спикера' },
+    { value: '3', label: '3', desc: 'Ровно три спикера' },
+    { value: '4+', label: '4+', desc: 'Четыре или больше спикеров' },
+  ];
+
   const handleTranscribe = async () => {
     if (!audioFile) return;
     setTranscribing(true);
     setError('');
     setTranscript('');
+    setSegments([]);
+    setOverlaps([]);
+    setDiarizationNotice('');
     setElapsed(0);
     setStatus('Загружаем файл...');
     setAiResults({ correct: null, tasks: null, keypoints: null, full: null });
+    setAgentContext(null);
+    setTranscriptArchive(null);
+    setTranscriptArchiveError('');
+    setTaskProposals([]);
+    setProposalDrafts({});
+    setTranscriptTopic('');
+    setAnalysisSummary('');
+    setKeyKnowledge([]);
+    setExtractionMetrics(null);
 
     const startTime = Date.now();
     const timer = setInterval(() => {
@@ -276,8 +500,7 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('audio', audioFile);
-      formData.append('language', language);
-      if (apiKey) { formData.append('apiKey', apiKey); formData.append('apiEndpoint', apiEndpoint); }
+      formData.append('speakerMode', speakerMode);
 
       setStatus('Транскрибируем...');
 
@@ -297,10 +520,20 @@ function App() {
         } else {
           setTranscript(data.transcript);
           setSegments(data.segments || []);
+          setOverlaps(data.overlaps || []);
+          if (data.diarized) {
+            setDiarizationNotice('');
+          } else if (data.diarization_error) {
+            setDiarizationNotice(`Диаризация не выполнена: ${data.diarization_error}`);
+          } else if (data.diarization_skipped_reason) {
+            setDiarizationNotice(`Диаризация пропущена: ${data.diarization_skipped_reason}`);
+          } else {
+            setDiarizationNotice('Диаризация не выполнена');
+          }
           if (AI_ANALYSIS_ENABLED) {
             setStatus('Анализируем...');
             const analysisText = data.segments?.length > 0
-              ? data.segments.map(s => `${s.speaker}:\n${s.text}`).join('\n\n')
+              ? formatSegmentsForExport(data.segments)
               : data.transcript;
             await runAutoAnalysis(analysisText);
           }
@@ -323,25 +556,50 @@ function App() {
   const handleAnalyze = async (action) => {
     setAnalyzing(action);
     setAiError('');
-    const history = action === 'full' ? getHistory().slice(0, 3) : undefined;
+    const history = action.startsWith('full') ? getHistory().slice(0, 3) : undefined;
+    const analysisTranscript = segments.length > 0
+      ? formatSegmentsForExport(segments)
+      : transcript;
     try {
       const response = await fetch(`${BACKEND}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transcript,
+          transcript: analysisTranscript,
           action,
-          apiKey: apiKey || undefined,
-          apiEndpoint: apiEndpoint || undefined,
-          apiModel: apiModel || undefined,
           userContext: userProfile || undefined,
           history: history?.length ? history : undefined,
+          preferredProject: contextProject || undefined,
+          sourceFilename: audioFile?.name || undefined,
+          speakersCount: uniqueSpeakers.length || undefined,
         })
       });
       const data = await response.json();
+      if (data.transcriptArchive) setTranscriptArchive(data.transcriptArchive);
+      setTranscriptArchiveError(data.transcriptArchiveError || '');
       if (data.success) {
         setAiResults(prev => ({ ...prev, [action]: data.result }));
-        if (action === 'full') addToHistory(audioFile?.name, data.result);
+        if (data.provider) setAiProvider(data.provider);
+        if (data.model) setAiModel(data.model);
+        if (data.agentContext) setAgentContext(data.agentContext);
+        if (data.topic) setTranscriptTopic(data.topic);
+        if (data.summary) setAnalysisSummary(data.summary);
+        if (Array.isArray(data.knowledge) && data.knowledge.length > 0) {
+          setKeyKnowledge(data.knowledge);
+        }
+        if (data.extractionMetrics) setExtractionMetrics(data.extractionMetrics);
+        if (Array.isArray(data.proposals) && ['tasks', 'full', 'full_client', 'full_mentor'].includes(action)) {
+          setTaskProposals(data.proposals);
+          setProposalDrafts(Object.fromEntries(data.proposals.map(proposal => [
+            proposal.id,
+            {
+              task: proposal.task,
+              projectId: proposal.projectId || '',
+              due: proposal.due || '',
+            },
+          ])));
+        }
+        if (action.startsWith('full')) addToHistory(audioFile?.name, data.result);
       } else {
         setAiError(data.error || 'Ошибка анализа');
       }
@@ -357,6 +615,44 @@ function App() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const updateProposalDraft = (id, field, value) => {
+    setProposalDrafts(previous => ({
+      ...previous,
+      [id]: { ...previous[id], [field]: value },
+    }));
+  };
+
+  const moderateProposal = async (proposal, decision) => {
+    setProposalBusy(proposal.id);
+    setAiError('');
+    try {
+      const draft = proposalDrafts[proposal.id] || {};
+      const response = await fetch(
+        `${BACKEND}/api/agent/proposals/${proposal.id}/${decision}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: decision === 'approve'
+            ? JSON.stringify({
+                task: draft.task,
+                projectId: draft.projectId,
+                due: draft.due || null,
+              })
+            : '{}',
+        }
+      );
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'Не удалось обновить задачу');
+      setTaskProposals(previous => previous.map(item =>
+        item.id === proposal.id ? data.proposal : item
+      ));
+    } catch (error) {
+      setAiError(`Obsidian: ${error.message}`);
+    } finally {
+      setProposalBusy(null);
+    }
   };
 
   const handleSave = (content, filename) => {
@@ -398,7 +694,7 @@ function App() {
   const AI_ACTIONS = [
     { key: 'correct', label: 'Исправить текст', icon: '✏️', desc: 'Исправить ошибки распознавания' },
     { key: 'tasks', label: 'Задачи', icon: '✅', desc: 'Вытащить задачи и договорённости' },
-    { key: 'keypoints', label: 'Ключевые мысли', icon: '💡', desc: 'Главные тезисы разговора' },
+    { key: 'keypoints', label: 'Ключевые знания', icon: '💡', desc: 'Устойчивые знания с источниками и статусом' },
   ];
 
   const ChipIcon = () => (
@@ -424,6 +720,17 @@ function App() {
     </svg>
   );
 
+  const uniqueSpeakers = [...new Set(segments.map(segment => segment.speaker).filter(Boolean))];
+  const meaningfulOverlapCount = segments.filter(segment => segment.has_overlap).length;
+  const asrDisplayName = asrModel === 'GigaAM-v3-RNNT'
+    ? 'GigaAM v3 RNNT'
+    : (asrModel || 'GigaAM v3 RNNT');
+  const aiDisplayName = aiProvider === 'pi'
+    ? `Pi · ${aiModel || 'GPT-5.6 Sol'}`
+    : aiProvider === 'custom-api'
+      ? (aiModel || 'Custom API')
+      : 'AI';
+
   return (
     <div className="min-h-screen" style={{ background: '#f0f4f1' }}>
       {/* Header */}
@@ -442,14 +749,34 @@ function App() {
             ) : (
               <span className="text-red-400 text-xs font-medium">● Сервер недоступен</span>
             )}
-            {backendReady && whisperDevice && (
-              <span className="text-xs font-medium" style={{ color: whisperDevice === 'cuda' ? '#6ee7a8' : 'rgba(255,255,255,0.6)' }}>
-                ● {whisperDevice === 'cuda' ? 'GPU (CUDA)' : 'CPU'} · {whisperModel || 'large-v3-turbo'}
+            {backendReady && asrDevice && (
+              <span className="text-xs font-medium" style={{ color: asrDevice === 'cuda' ? '#6ee7a8' : 'rgba(255,255,255,0.6)' }}>
+                ● {asrDevice === 'cuda' ? 'GPU (CUDA)' : 'CPU'} · {asrDisplayName}
               </span>
             )}
-            {backendReady && (aiProvider !== 'none' || apiKey) && (
+            {backendReady && asrReady && (
+              <span
+                className="text-xs font-medium"
+                title={diarizationModel || 'pyannote/speaker-diarization-community-1'}
+                style={{ color: diarizationReady ? '#6ee7a8' : '#fbbf24' }}
+              >
+                ● Диаризация · Community-1{diarizationReady ? '' : ' недоступна'}
+              </span>
+            )}
+            {backendReady && aiProvider !== 'none' && (
               <span className="text-xs font-medium" style={{ color: '#6ee7a8' }}>
-                ● AI · {apiKey ? 'Groq' : aiProvider === 'ollama' ? 'Ollama' : 'Groq'}
+                ● AI · {aiDisplayName}
+              </span>
+            )}
+            {backendReady && obsidianStatus && (
+              <span
+                className="text-xs font-medium"
+                title={obsidianStatus.vaultPath}
+                style={{ color: obsidianStatus.connected ? '#6ee7a8' : '#fbbf24' }}
+              >
+                ● Obsidian · {obsidianStatus.connected
+                  ? `${obsidianStatus.documentsCount} заметок`
+                  : 'vault недоступен'}
               </span>
             )}
             <button
@@ -512,39 +839,13 @@ function App() {
           {/* Язык */}
           <div className="mb-5">
             <label className="block text-sm font-medium text-gray-700 mb-2">Язык аудио</label>
-            <div className="flex gap-2">
-              {[
-                { value: 'ru', label: 'Русский', flag: (
-                  <svg width="20" height="14" viewBox="0 0 20 14" xmlns="http://www.w3.org/2000/svg">
-                    <rect width="20" height="14" fill="#fff"/>
-                    <rect y="4.67" width="20" height="4.67" fill="#0039A6"/>
-                    <rect y="9.33" width="20" height="4.67" fill="#D52B1E"/>
-                  </svg>
-                )},
-                { value: 'en', label: 'English', flag: (
-                  <svg width="20" height="14" viewBox="0 0 20 14" xmlns="http://www.w3.org/2000/svg">
-                    <rect width="20" height="14" fill="#012169"/>
-                    <path d="M0,0 L20,14 M20,0 L0,14" stroke="#fff" strokeWidth="2.5"/>
-                    <path d="M0,0 L20,14 M20,0 L0,14" stroke="#C8102E" strokeWidth="1.5"/>
-                    <path d="M10,0 V14 M0,7 H20" stroke="#fff" strokeWidth="4"/>
-                    <path d="M10,0 V14 M0,7 H20" stroke="#C8102E" strokeWidth="2.5"/>
-                  </svg>
-                )},
-              ].map(({ value, label, flag }) => (
-                <button
-                  key={value}
-                  onClick={() => setLanguage(value)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg border font-medium text-sm transition"
-                  style={{
-                    background: language === value ? '#0c3b26' : '#fff',
-                    color: language === value ? '#fff' : '#374151',
-                    borderColor: language === value ? '#0c3b26' : '#d1d5db',
-                  }}
-                >
-                  <span className="rounded-sm overflow-hidden flex-shrink-0">{flag}</span>
-                  {label}
-                </button>
-              ))}
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium" style={{ background: '#0c3b26', color: '#fff', borderColor: '#0c3b26' }}>
+              <svg width="20" height="14" viewBox="0 0 20 14" xmlns="http://www.w3.org/2000/svg" className="rounded-sm overflow-hidden flex-shrink-0">
+                <rect width="20" height="14" fill="#fff"/>
+                <rect y="4.67" width="20" height="4.67" fill="#0039A6"/>
+                <rect y="9.33" width="20" height="4.67" fill="#D52B1E"/>
+              </svg>
+              Русский · GigaAM v3 RNNT
             </div>
           </div>
 
@@ -568,6 +869,53 @@ function App() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Количество спикеров */}
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Количество спикеров</label>
+            <div className="flex gap-2 flex-wrap">
+              {SPEAKER_MODES.map(({ value, label, desc }) => (
+                <button
+                  key={value}
+                  onClick={() => setAndSaveSpeakerMode(value)}
+                  title={desc}
+                  className="px-4 py-2 rounded-lg border font-medium text-sm transition"
+                  style={{
+                    background: speakerMode === value ? '#0c3b26' : '#fff',
+                    color: speakerMode === value ? '#fff' : '#374151',
+                    borderColor: speakerMode === value ? '#0c3b26' : '#d1d5db',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              Если число участников известно, точный выбор обычно уменьшает ошибки разделения.
+            </p>
+          </div>
+
+          {/* Проект Obsidian */}
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Проект для контекста и архива
+            </label>
+            <select
+              value={contextProject}
+              onChange={(event) => setAndSaveContextProject(event.target.value)}
+              disabled={!obsidianStatus?.connected}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-700 disabled:bg-gray-100"
+            >
+              <option value="">Определить автоматически</option>
+              {(obsidianStatus?.projects || []).map(project => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              Транскрипция сохранится в папку «Транскрипции» выбранного проекта.
+              При автоопределении неизвестные записи попадут в «Транскрипции/Неразобранное».
+            </p>
           </div>
 
           {/* Загрузка файла */}
@@ -605,35 +953,25 @@ function App() {
           {/* Кнопка */}
           <button
             onClick={handleTranscribe}
-            disabled={!audioFile || transcribing || !backendReady || !whisperReady}
+            disabled={!audioFile || transcribing || !backendReady || !asrReady}
             className="w-full disabled:bg-gray-300 text-white font-bold py-3 px-6 rounded-lg transition"
-            style={{ background: (!audioFile || transcribing || !backendReady || !whisperReady) ? undefined : '#0c3b26' }}
+            style={{ background: (!audioFile || transcribing || !backendReady || !asrReady) ? undefined : '#0c3b26' }}
           >
-            {transcribing ? '⏳ Обрабатываем...' : !whisperReady && backendReady ? (modelDownload ? `⬇️ Загрузка модели ${modelDownload.pct}% (${modelDownload.done} / ${modelDownload.total} МБ)` : '⏳ Запуск сервиса...') : '📝 Транскрибировать'}
+            {transcribing ? '⏳ Обрабатываем...' : !asrReady && backendReady ? '⏳ Запуск GigaAM...' : '📝 Транскрибировать'}
           </button>
-          {!whisperReady && backendReady && (
+          {!asrReady && backendReady && (
             <div style={{ marginTop: 8 }}>
-              {modelDownload ? (
-                <>
-                  <div style={{ background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 8 }}>
-                    <div style={{ width: `${modelDownload.pct}%`, height: '100%', background: '#0c3b26', transition: 'width 0.5s' }} />
-                  </div>
-                  <p className="text-xs text-center mt-1" style={{ color: '#6b7280' }}>
-                    Скачивается модель Whisper: {modelDownload.pct}% ({modelDownload.done} / {modelDownload.total} МБ)
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div style={{ background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 8 }}>
-                    <div style={{
-                      height: '100%', background: '#0c3b26', borderRadius: 8,
-                      width: '40%', animation: 'pulse-bar 1.5s ease-in-out infinite'
-                    }} />
-                  </div>
-                  <p className="text-xs text-center mt-1" style={{ color: '#9ca3af' }}>
-                    При первом запуске скачивается модель Whisper (~800 МБ) — подождите несколько минут
-                  </p>
-                </>
+              <div style={{ background: '#eaf3ee', borderRadius: 8, overflow: 'hidden', height: 8 }}>
+                <div style={{
+                  height: '100%', background: '#0c3b26', borderRadius: 8,
+                  width: '40%', animation: 'pulse-bar 1.5s ease-in-out infinite'
+                }} />
+              </div>
+              <p className="text-xs text-center mt-1" style={{ color: '#9ca3af' }}>
+                При первом запуске загружаются GigaAM v3 RNNT и Community-1 — подождите несколько минут
+              </p>
+              {asrStartupError && (
+                <p className="text-xs text-red-600 mt-2">{asrStartupError}</p>
               )}
             </div>
           )}
@@ -655,30 +993,77 @@ function App() {
         {lastElapsed !== null && !transcribing && (
           <div className="mb-3 text-xs text-center" style={{ color: '#6b7280' }}>
             ⏱ Транскрибировано за {lastElapsed} сек
-            {whisperDevice && <span> · {whisperDevice === 'cuda' ? '🟢 GPU (CUDA)' : '🟡 CPU'}</span>}
+            {asrDevice && <span> · {asrDevice === 'cuda' ? '🟢 GPU (CUDA)' : '🟡 CPU'}</span>}
           </div>
         )}
         {transcript && (
           <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
             <h2 className="text-xl font-bold mb-4 text-gray-800">
               📄 Транскрипция
-              {segments.length > 0 && (
+              {uniqueSpeakers.length > 0 && (
                 <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: '#eaf3ee', color: '#0c3b26' }}>
-                  👥 {[...new Set(segments.map(s => s.speaker))].length} спикера
+                  👥 {uniqueSpeakers.length} спикеров
+                </span>
+              )}
+              {meaningfulOverlapCount > 0 && (
+                <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: '#fff7ed', color: '#9a3412' }}>
+                  ⚠ Заметных наложений: {meaningfulOverlapCount}
                 </span>
               )}
             </h2>
 
+            {diarizationNotice && (
+              <div
+                className="mb-4 rounded-lg p-3 text-sm"
+                style={{ background: '#fff7ed', color: '#9a3412', border: '1px solid #fdba74' }}
+              >
+                {diarizationNotice}
+              </div>
+            )}
+
+            {transcriptArchive && (
+              <div
+                className="mb-4 rounded-lg p-3 text-sm"
+                style={{ background: '#ecfdf5', color: '#166534', border: '1px solid #86efac' }}
+              >
+                ✓ Сохранено в Obsidian: <span className="font-medium">{transcriptArchive.relativePath}</span>
+                {transcriptArchive.duplicate ? ' · такая транскрипция уже была в архиве' : ''}
+              </div>
+            )}
+            {transcriptArchiveError && (
+              <div className="mb-4 rounded-lg p-3 text-sm bg-amber-50 text-amber-800 border border-amber-200">
+                ⚠ Не удалось сохранить в Obsidian: {transcriptArchiveError}
+              </div>
+            )}
+
             {segments.length > 0 ? (
               <div className="space-y-3">
                 {segments.map((seg, i) => {
-                  const isFirst = seg.speaker === [...new Set(segments.map(s => s.speaker))][0];
+                  const speakerIndex = Math.max(0, uniqueSpeakers.indexOf(seg.speaker));
+                  const speakerStyle = SPEAKER_STYLES[speakerIndex % SPEAKER_STYLES.length];
+                  const timeLabel = getSegmentTimeLabel(seg);
                   return (
-                    <div key={i} className={`rounded-lg p-3 border ${isFirst ? 'border-blue-200 bg-blue-50' : 'border-orange-200 bg-orange-50'}`}>
-                      <div className={`text-xs font-semibold mb-1 ${isFirst ? 'text-blue-700' : 'text-orange-700'}`}>
-                        {seg.speaker}
+                    <div
+                      key={i}
+                      className={`rounded-lg p-3 border ${speakerStyle.block} ${seg.has_overlap ? 'ring-1 ring-red-300' : ''}`}
+                    >
+                      <div className="flex items-center justify-between gap-3 mb-1">
+                        <div className={`text-xs font-semibold ${speakerStyle.label}`}>
+                          {seg.speaker || 'Речь'}
+                          {seg.has_overlap && (
+                            <span className="ml-2 px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">
+                              ⚠ заметное наложение
+                              {Number.isFinite(Number(seg.overlap_seconds))
+                                ? ` ~${Number(seg.overlap_seconds).toFixed(1)} с`
+                                : ''}
+                            </span>
+                          )}
+                        </div>
+                        {timeLabel && (
+                          <span className="text-xs font-mono text-gray-500 whitespace-nowrap">{timeLabel}</span>
+                        )}
                       </div>
-                      <p className={`text-sm leading-relaxed ${isFirst ? 'text-blue-900' : 'text-orange-900'}`}>
+                      <p className={`text-sm leading-relaxed ${speakerStyle.text}`}>
                         {seg.text}
                       </p>
                     </div>
@@ -695,7 +1080,7 @@ function App() {
               <button
                 onClick={() => {
                   const text = segments.length > 0
-                    ? segments.map(s => `${s.speaker}:\n${s.text}`).join('\n\n')
+                    ? formatSegmentsForExport(segments)
                     : transcript;
                   handleCopy(text);
                 }}
@@ -707,7 +1092,7 @@ function App() {
               <button
                 onClick={() => {
                   const text = segments.length > 0
-                    ? segments.map(s => `${s.speaker}:\n${s.text}`).join('\n\n')
+                    ? formatSegmentsForExport(segments)
                     : transcript;
                   handleSave(`=== ТРАНСКРИПЦИЯ ===\n\n${text}${aiResults.full ? `\n\n=== AI АНАЛИЗ ===\n\n${aiResults.full}` : ''}`, getFilename('всё'));
                 }}
@@ -717,7 +1102,7 @@ function App() {
                 💾 Сохранить
               </button>
               <button
-                onClick={() => { setTranscript(''); setSegments([]); setAudioFile(null); setAiResults({ correct: null, tasks: null, keypoints: null, full: null }); setLastElapsed(null); const inp = document.getElementById('audioInput'); if (inp) inp.value = ''; }}
+                onClick={() => { setTranscript(''); setSegments([]); setOverlaps([]); setDiarizationNotice(''); setAudioFile(null); setAiResults({ correct: null, tasks: null, keypoints: null, full: null }); setAgentContext(null); setTranscriptArchive(null); setTranscriptArchiveError(''); setTaskProposals([]); setProposalDrafts({}); setTranscriptTopic(''); setAnalysisSummary(''); setKeyKnowledge([]); setExtractionMetrics(null); setLastElapsed(null); const inp = document.getElementById('audioInput'); if (inp) inp.value = ''; }}
                 className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-lg transition text-sm"
               >
                 Очистить
@@ -732,20 +1117,66 @@ function App() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-800">🤖 AI Анализ</h2>
               <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: '#eaf3ee', color: '#0c3b26' }}>
-                {aiProvider === 'groq' ? 'Groq' : aiProvider === 'ollama' ? 'Ollama' : 'AI'}
+                {aiDisplayName}
               </span>
             </div>
 
+            {agentContext && (
+              <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-xs text-green-900">
+                <div className="font-semibold">
+                  Контекст: {agentContext.detectedProject?.name || 'проект не определён'}
+                </div>
+                {agentContext.sources?.length > 0 && (
+                  <div className="mt-1 text-green-700">
+                    Использовано заметок: {agentContext.sources.length}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {(transcriptTopic || analysisSummary) && (
+              <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                {transcriptTopic && (
+                  <div className="font-semibold text-gray-900">Тема: {transcriptTopic}</div>
+                )}
+                {analysisSummary && (
+                  <p className="text-sm text-gray-600 mt-1">{analysisSummary}</p>
+                )}
+              </div>
+            )}
+
+            {extractionMetrics && (
+              <div className="mb-4 flex flex-wrap gap-2 text-xs">
+                <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                  Задач: {extractionMetrics.tasksTotal || 0}
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  Знаний: {extractionMetrics.knowledgeTotal || 0}
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+                  Числовых метрик: {extractionMetrics.metricsFound || 0}
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                  На проверку: {(extractionMetrics.needsConfirmation || 0) + (extractionMetrics.asrRisks || 0)}
+                </span>
+              </div>
+            )}
+
             {/* Подсказка — нет ключа */}
-            {!apiKey && (
+            {aiProvider === 'none' && (
               <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
-                <p className="font-semibold text-blue-800 text-sm mb-2">Нужен бесплатный Groq API ключ</p>
-                <ol className="text-xs text-blue-700 space-y-1 mb-3">
-                  <li>1. Перейди на <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline font-medium">console.groq.com/keys</a></li>
-                  <li>2. Зарегистрируйся (бесплатно, без карты)</li>
-                  <li>3. Нажми <strong>Create API Key</strong> → скопируй</li>
-                  <li>4. Вставь в <button onClick={() => setShowApiSettings(true)} className="underline font-medium">Настройки → AI Анализ</button></li>
-                </ol>
+                <p className="font-semibold text-blue-800 text-sm mb-2">
+                  {appConfig?.aiMode === 'pi' ? 'Нужно войти в Pi' : 'AI-агент ещё не настроен'}
+                </p>
+                {appConfig?.aiMode === 'pi' ? (
+                  <p className="text-xs text-blue-700 mb-3">
+                    Откройте вход в Pi, выполните <strong>/login → ChatGPT Plus/Pro (Codex)</strong>, затем перезапустите приложение.
+                  </p>
+                ) : (
+                  <p className="text-xs text-blue-700 mb-3">
+                    Выберите Pi с собственной авторизацией пользователя или сторонний OpenAI-совместимый API.
+                  </p>
+                )}
                 <button
                   onClick={() => setShowApiSettings(true)}
                   className="text-xs px-3 py-1.5 rounded-lg text-white font-medium"
@@ -759,8 +1190,8 @@ function App() {
             {/* Кнопка анализа */}
             <div className="flex flex-wrap gap-2 mb-4">
               <button
-                onClick={() => runAutoAnalysis(transcript)}
-                disabled={!!analyzing || !apiKey}
+                onClick={() => runAutoAnalysis(segments.length > 0 ? formatSegmentsForExport(segments) : transcript)}
+                disabled={!!analyzing || aiProvider === 'none'}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50"
                 style={{ background: '#0c3b26', color: '#fff' }}
               >
@@ -774,6 +1205,20 @@ function App() {
                   </>
                 ) : '📊 Повторить анализ'}
               </button>
+              {AI_ACTIONS.filter(action => ['tasks', 'keypoints'].includes(action.key)).map(action => (
+                <button
+                  key={action.key}
+                  onClick={() => handleAnalyze(action.key)}
+                  disabled={!!analyzing || aiProvider === 'none'}
+                  title={action.desc}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50 border"
+                  style={{ background: '#fff', color: '#0c3b26', borderColor: '#9dc6ae' }}
+                >
+                  {analyzing === action.key
+                    ? `⏳ ${action.label}... ${analyzeElapsed > 0 ? `(${analyzeElapsed}с)` : ''}`
+                    : `${action.icon} ${action.label}`}
+                </button>
+              ))}
             </div>
 
             {aiError && (
@@ -793,6 +1238,144 @@ function App() {
                 </div>
                 <div className="bg-gray-50 px-4 py-3">
                   <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">{aiResults.full}</p>
+                </div>
+              </div>
+            )}
+
+            {AI_ACTIONS.filter(action => ['tasks', 'keypoints'].includes(action.key)).map(action => (
+              aiResults[action.key] && (
+                <div key={action.key} className="border border-gray-200 rounded-lg overflow-hidden mt-4">
+                  <div className="px-4 py-2 flex justify-between items-center" style={{ background: '#eaf3ee' }}>
+                    <span className="font-semibold text-sm" style={{ color: '#0c3b26' }}>
+                      {action.icon} {action.label}
+                    </span>
+                    <button onClick={() => handleCopy(aiResults[action.key])} className="text-xs" style={{ color: '#1a5c3a' }}>
+                      📋 Копировать
+                    </button>
+                  </div>
+                  <div className="bg-gray-50 px-4 py-3">
+                    <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">{aiResults[action.key]}</p>
+                  </div>
+                </div>
+              )
+            ))}
+
+            {keyKnowledge.length > 0 && (
+              <div className="mt-5 border border-emerald-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 bg-emerald-50">
+                  <h3 className="font-semibold text-emerald-900">Ключевые знания</h3>
+                  <p className="text-xs text-emerald-700 mt-1">
+                    Производные выводы: источник и статус показаны для проверки.
+                  </p>
+                </div>
+                <div className="p-4 space-y-3 bg-white">
+                  {keyKnowledge.map((item, index) => (
+                    <div key={`${item.timecode}-${index}`} className="rounded-lg border border-gray-200 p-3">
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                          {KNOWLEDGE_KIND_LABELS[item.kind] || item.kind}
+                        </span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          item.status === 'direct'
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'bg-amber-50 text-amber-700'
+                        }`}>
+                          {KNOWLEDGE_STATUS_LABELS[item.status] || item.status}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium text-gray-900">{item.statement}</p>
+                      <p className="text-xs text-gray-500 mt-2">
+                        {[item.speaker, item.timecode && `[${item.timecode}]`, item.evidence]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {taskProposals.length > 0 && (
+              <div className="mt-5 border border-amber-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 bg-amber-50">
+                  <h3 className="font-semibold text-amber-900">Задачи для Obsidian</h3>
+                  <p className="text-xs text-amber-700 mt-1">
+                    Ничего не записывается без твоего подтверждения.
+                  </p>
+                </div>
+                <div className="p-4 space-y-4 bg-white">
+                  {taskProposals.map(proposal => {
+                    const draft = proposalDrafts[proposal.id] || {
+                      task: proposal.task,
+                      projectId: proposal.projectId || '',
+                      due: proposal.due || '',
+                    };
+                    const isPending = proposal.status === 'pending';
+                    return (
+                      <div key={proposal.id} className="rounded-lg border border-gray-200 p-3">
+                        <input
+                          value={draft.task}
+                          onChange={(event) => updateProposalDraft(proposal.id, 'task', event.target.value)}
+                          disabled={!isPending}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50"
+                        />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                          <select
+                            value={draft.projectId}
+                            onChange={(event) => updateProposalDraft(proposal.id, 'projectId', event.target.value)}
+                            disabled={!isPending}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white disabled:bg-gray-50"
+                          >
+                            <option value="">Выбрать проект</option>
+                            {(obsidianStatus?.projects || []).map(project => (
+                              <option key={project.id} value={project.id}>{project.name}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="date"
+                            value={draft.due}
+                            onChange={(event) => updateProposalDraft(proposal.id, 'due', event.target.value)}
+                            disabled={!isPending}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50"
+                          />
+                        </div>
+                        {(proposal.speaker || proposal.timecode || proposal.evidence) && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            {[proposal.speaker, proposal.timecode && `[${proposal.timecode}]`, proposal.evidence]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        )}
+                        {isPending ? (
+                          <div className="flex gap-2 mt-3">
+                            <button
+                              onClick={() => moderateProposal(proposal, 'approve')}
+                              disabled={proposalBusy === proposal.id || !draft.projectId || !draft.task?.trim()}
+                              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
+                              style={{ background: '#0c3b26' }}
+                            >
+                              {proposalBusy === proposal.id ? 'Сохраняем...' : '✓ Записать задачу'}
+                            </button>
+                            <button
+                              onClick={() => moderateProposal(proposal, 'reject')}
+                              disabled={proposalBusy === proposal.id}
+                              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-300 text-gray-600 disabled:opacity-50"
+                            >
+                              Отклонить
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-xs font-medium" style={{
+                            color: proposal.status === 'approved' ? '#166534' : '#6b7280',
+                          }}>
+                            {proposal.status === 'approved' && `✓ Записано в ${proposal.taskFileRelative}`}
+                            {proposal.status === 'duplicate' && 'Такая задача уже есть — дубль не создан'}
+                            {proposal.status === 'rejected' && 'Отклонено'}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -829,13 +1412,23 @@ function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-5">
-              <h3 className="text-lg font-bold text-gray-800">⚙️ Настройки</h3>
-              <button onClick={() => setShowApiSettings(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              <h3 className="text-lg font-bold text-gray-800">
+                {showAiOnboarding ? 'Первоначальная настройка' : '⚙️ Настройки'}
+              </h3>
+              {!showAiOnboarding && (
+                <button onClick={() => setShowApiSettings(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              )}
             </div>
+
+            {showAiOnboarding && (
+              <p className="text-sm text-gray-600 mb-5">
+                Выберите собственного AI-агента. В установщике нет ключей и авторизации разработчика.
+              </p>
+            )}
 
             {/* Диаризация спикеров */}
             <div className="mb-6">
-              <h4 className="font-semibold text-gray-700 mb-3">👥 Разделение по спикерам</h4>
+              <h4 className="font-semibold text-gray-700 mb-3">👥 Разделение по спикерам · Community-1</h4>
 
               {/* Статус */}
               {diarizeStatus && (
@@ -846,7 +1439,7 @@ function App() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span>{diarizeStatus.pyannote ? '✅' : '❌'}</span>
-                    <span className="text-gray-600">pyannote.audio: {diarizeStatus.pyannote ? 'установлен' : 'не установлен'}</span>
+                    <span className="text-gray-600">Community-1 (pyannote.audio): {diarizeStatus.pyannote ? 'установлена' : 'не установлена'}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span>{diarizeStatus.hfToken ? '✅' : '❌'}</span>
@@ -854,7 +1447,7 @@ function App() {
                   </div>
                   {diarizeStatus.ready && (
                     <div className="mt-2 text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: '#eaf3ee', color: '#0c3b26' }}>
-                      🎉 Диаризация готова к работе
+                      🎉 Диаризация Community-1 готова к работе
                     </div>
                   )}
                 </div>
@@ -872,7 +1465,7 @@ function App() {
                     className="w-full py-2 text-sm text-white rounded-lg font-medium disabled:opacity-50"
                     style={{ background: '#1a5c3a' }}
                   >
-                    {diarizeInstalling ? '⏳ Устанавливаем...' : '⬇️ Установить pyannote.audio'}
+                    {diarizeInstalling ? '⏳ Устанавливаем...' : '⬇️ Установить Community-1'}
                   </button>
                   {diarizeInstalling && (
                     <div className="mt-2">
@@ -898,7 +1491,7 @@ function App() {
               {diarizeStatus && !diarizeStatus.hfToken && (
                 <div className="mt-3">
                   <p className="text-xs text-gray-500 mb-1">
-                    Нужен <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" className="underline text-blue-600">HuggingFace токен</a> (бесплатно) для загрузки модели диаризации
+                    Необязательно: без HF обычная транскрибация работает, но спикеры не разделяются. Для диаризации нужен собственный <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" className="underline text-blue-600">Hugging Face read-токен</a>.
                   </p>
                   <input
                     type="password"
@@ -920,42 +1513,101 @@ function App() {
               )}
             </div>
 
-            {/* Groq API Key */}
+            {/* Выбор пользовательского AI-агента */}
             <div className="mb-6 border-t pt-5">
-              <h4 className="font-semibold text-gray-700 mb-1">🤖 AI Анализ (Groq)</h4>
-              <p className="text-xs text-gray-500 mb-3">
-                Получить ключ бесплатно: <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline text-blue-600">console.groq.com/keys</a>
-              </p>
-              <input
-                type="password"
-                placeholder="gsk_..."
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2"
-                style={{ borderColor: '#d1d5db' }}
-              />
+              <h4 className="font-semibold text-gray-700 mb-3">🤖 AI-анализ</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setAiModeDraft('pi')}
+                  className={`text-left rounded-lg border p-3 ${aiModeDraft === 'pi' ? 'border-green-700 bg-green-50' : 'border-gray-200'}`}
+                >
+                  <div className="font-semibold text-sm">Pi + ChatGPT</div>
+                  <div className="text-xs text-gray-500 mt-1">Вход выполняет сам пользователь через /login.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAiModeDraft('custom-api')}
+                  className={`text-left rounded-lg border p-3 ${aiModeDraft === 'custom-api' ? 'border-green-700 bg-green-50' : 'border-gray-200'}`}
+                >
+                  <div className="font-semibold text-sm">Сторонний API</div>
+                  <div className="text-xs text-gray-500 mt-1">Любой OpenAI-совместимый endpoint и ключ пользователя.</div>
+                </button>
+              </div>
+
+              {piStatus && (
+                <div className={`text-xs mb-4 rounded-lg px-3 py-2 ${aiModeDraft === 'pi' ? '' : 'opacity-50'}`} style={{ background: piStatus.available && piStatus.authConfigured ? '#eaf3ee' : '#fff7ed', color: '#374151' }}>
+                  <div>{piStatus.available ? '✅' : '❌'} Pi Coding Agent {piStatus.version || ''}</div>
+                  <div>{piStatus.authConfigured ? '✅ Авторизация ChatGPT найдена' : '⚠️ Требуется /login → ChatGPT Plus/Pro (Codex)'}</div>
+                  <div>Модель: {piStatus.provider || 'openai-codex'}/{piStatus.model || 'gpt-5.6-sol'} · thinking {piStatus.thinking || 'high'}</div>
+                </div>
+              )}
+
+              {aiModeDraft === 'pi' && (
+                <div className="space-y-2 mb-4">
+                  <label className="block text-xs font-medium text-gray-600">Модель Pi</label>
+                  <select
+                    value={piModelDraft}
+                    onChange={e => setPiModelDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono bg-white"
+                  >
+                    {PI_MODELS.map(model => <option key={model} value={model}>{model}</option>)}
+                  </select>
+                  <label className="block text-xs font-medium text-gray-600">Глубина рассуждения</label>
+                  <select
+                    value={piThinkingDraft}
+                    onChange={e => setPiThinkingDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono bg-white"
+                  >
+                    {PI_THINKING_LEVELS.map(level => <option key={level} value={level}>{level}</option>)}
+                  </select>
+                  <p className="text-xs text-gray-500">Настройка применяется к автоматическому AI-анализу после сохранения.</p>
+                </div>
+              )}
+
+              {aiModeDraft === 'custom-api' && (
+                <div className="space-y-2">
+                  <input
+                    type="url"
+                    placeholder="https://api.example.com/v1"
+                    value={apiEndpointDraft}
+                    onChange={e => setApiEndpointDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Название модели"
+                    value={apiModelDraft}
+                    onChange={e => setApiModelDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                  />
+                  <input
+                    type="password"
+                    placeholder={appConfig?.apiKeyConfigured ? 'Ключ уже сохранён; оставьте пустым, чтобы не менять' : 'API-ключ'}
+                    value={apiKeyDraft}
+                    onChange={e => setApiKeyDraft(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                  />
+                  <p className="text-xs text-gray-500">Ключ шифруется Windows DPAPI для текущего пользователя и не хранится в localStorage.</p>
+                </div>
+              )}
+
+              {configError && <p className="text-xs text-red-600 mt-3">{configError}</p>}
               <button
-                onClick={() => {
-                  localStorage.setItem('apiKey', apiKey);
-                  localStorage.setItem('apiEndpoint', 'https://api.groq.com/openai/v1');
-                  localStorage.setItem('apiModel', 'llama-3.3-70b-versatile');
-                  setApiEndpoint('https://api.groq.com/openai/v1');
-                  setApiModel('llama-3.3-70b-versatile');
-                  setShowApiSettings(false);
-                }}
-                className="mt-2 px-4 py-2 text-sm text-white rounded-lg font-medium"
+                onClick={saveAgentSettings}
+                disabled={configSaving || (aiModeDraft === 'custom-api' && !apiKeyDraft && !appConfig?.apiKeyConfigured)}
+                className="mt-4 w-full px-4 py-2 text-sm text-white rounded-lg font-medium disabled:opacity-40"
                 style={{ background: '#0c3b26' }}
               >
-                Сохранить ключ
+                {configSaving ? 'Сохраняем...' : aiModeDraft === 'pi' ? 'Сохранить и открыть вход в Pi' : 'Сохранить сторонний API'}
               </button>
-              {apiKey && <p className="text-xs text-green-600 mt-1">✅ Ключ сохранён</p>}
             </div>
 
-            <div className="flex justify-end">
+            {!showAiOnboarding && <div className="flex justify-end">
               <button onClick={() => setShowApiSettings(false)} className="px-4 py-2 text-sm text-white rounded-lg font-medium" style={{ background: '#0c3b26' }}>
                 Закрыть
               </button>
-            </div>
+            </div>}
           </div>
         </div>
       )}

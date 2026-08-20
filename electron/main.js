@@ -1,14 +1,16 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow = null;
-let whisperProcess = null;
+let gigaamProcess = null;
 let backendProcess = null;
 let botProcess = null;
 let botUsername = null;
+const USER_CONFIG_VERSION = 2;
+const PI_THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 
 const IS_PROD = app.isPackaged;
 const APP_PATH = app.getAppPath();
@@ -17,8 +19,12 @@ const RESOURCES = process.resourcesPath;
 // Логирование в файл для отладки
 const logFile = path.join(app.getPath('userData'), 'app.log');
 function log(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}\n`;
-  console.log(msg);
+  const safeMsg = String(msg).replace(
+    /bot\d+:[A-Za-z0-9_-]+/gi,
+    'bot[REDACTED]'
+  );
+  const line = `[${new Date().toISOString()}] ${safeMsg}\n`;
+  console.log(safeMsg);
   try { fs.appendFileSync(logFile, line); } catch(e) {}
 }
 
@@ -42,7 +48,110 @@ function loadEnvVar(key) {
   return null;
 }
 
-function loadHfToken() { return loadEnvVar('HF_TOKEN'); }
+function getUserConfigPath() {
+  return path.join(app.getPath('userData'), 'secure-config.json');
+}
+
+function readUserConfig() {
+  const defaults = {
+    version: USER_CONFIG_VERSION,
+    onboardingComplete: false,
+    aiMode: 'none',
+    piModel: 'gpt-5.6-sol',
+    piThinking: 'high',
+    apiEndpoint: 'https://api.openai.com/v1',
+    apiModel: 'gpt-4o-mini',
+    apiKeyEncrypted: null,
+    hfTokenEncrypted: null,
+  };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(getUserConfigPath(), 'utf8'));
+    return { ...defaults, ...parsed };
+  } catch {
+    return defaults;
+  }
+}
+
+function decryptSecret(value) {
+  if (!value || !safeStorage.isEncryptionAvailable()) return '';
+  try {
+    return safeStorage.decryptString(Buffer.from(value, 'base64'));
+  } catch {
+    return '';
+  }
+}
+
+function encryptSecret(value) {
+  if (!value) return null;
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Windows не предоставил защищённое хранилище DPAPI');
+  }
+  return safeStorage.encryptString(String(value)).toString('base64');
+}
+
+function writeUserConfig(next) {
+  const configPath = getUserConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(next, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+}
+
+function loadHfToken() {
+  return decryptSecret(readUserConfig().hfTokenEncrypted) || loadEnvVar('HF_TOKEN');
+}
+
+function findBundledPiCli() {
+  const base = IS_PROD
+    ? path.join(RESOURCES, 'pi-agent', 'node_modules')
+    : path.join(APP_PATH, 'pi-runtime', 'node_modules');
+  const candidate = path.join(
+    base,
+    '@earendil-works',
+    'pi-coding-agent',
+    'dist',
+    'cli.js'
+  );
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function publicUserConfig() {
+  const config = readUserConfig();
+  return {
+    onboardingComplete: Boolean(config.onboardingComplete),
+    aiMode: config.aiMode,
+    piModel: config.piModel,
+    piThinking: config.piThinking,
+    apiEndpoint: config.apiEndpoint,
+    apiModel: config.apiModel,
+    apiKeyConfigured: Boolean(decryptSecret(config.apiKeyEncrypted)),
+    hfTokenConfigured: Boolean(loadHfToken()),
+    encryptionAvailable: safeStorage.isEncryptionAvailable(),
+    piBundled: Boolean(findBundledPiCli()),
+  };
+}
+
+function loadGigaAmPort() {
+  return loadEnvVar('GIGAAM_SERVICE_PORT')
+    || process.env.GIGAAM_SERVICE_PORT
+    || '17801';
+}
+
+function stripUnsupportedProxyEnv(env) {
+  const cleaned = { ...env };
+  for (const key of [
+    'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
+    'http_proxy', 'https_proxy', 'all_proxy',
+  ]) {
+    if (/^socks4:\/\//i.test(cleaned[key] || '')) {
+      delete cleaned[key];
+    }
+  }
+  cleaned.NO_PROXY = cleaned.NO_PROXY || '127.0.0.1,localhost';
+  cleaned.no_proxy = cleaned.no_proxy || cleaned.NO_PROXY;
+  return cleaned;
+}
 
 function startTelegramBot() {
   const token = loadEnvVar('TELEGRAM_BOT_TOKEN');
@@ -81,46 +190,59 @@ function startTelegramBot() {
   });
 }
 
-function startWhisperService() {
-  const exe = IS_PROD
-    ? path.join(RESOURCES, 'whisper_service', 'whisper_service.exe')
-    : path.join(APP_PATH, '..', 'dist', 'whisper_service', 'whisper_service.exe');
+function findGigaAmPython() {
+  const localAppData = process.env.LOCALAPPDATA || '';
+  const candidates = [
+    path.join(localAppData, 'Programs', 'Python', 'Python312', 'python.exe'),
+    'C:\\Program Files\\Python312\\python.exe',
+    'C:\\Python312\\python.exe',
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) || 'python';
+}
 
+function startGigaAmService() {
+  const exe = IS_PROD
+    ? path.join(RESOURCES, 'gigaam_service', 'gigaam_service.exe')
+    : null;
   const py = IS_PROD
     ? null
-    : path.join(APP_PATH, '..', 'backend', 'whisper_service.py');
-
+    : path.join(APP_PATH, '..', 'backend', 'gigaam_service.py');
   const hfToken = loadHfToken();
-  const whisperEnv = { ...process.env };
+  const gigaamEnv = stripUnsupportedProxyEnv(process.env);
+  gigaamEnv.GIGAAM_SERVICE_PORT = loadGigaAmPort();
   if (hfToken) {
-    whisperEnv.HF_TOKEN = hfToken;
-    log('ℹ️ HF_TOKEN загружен для диаризации');
+    gigaamEnv.HF_TOKEN = hfToken;
+    log('ℹ️ HF_TOKEN загружен для Community-1');
   }
 
-  if (fs.existsSync(exe)) {
-    log(`Запускаем whisper EXE: ${exe}`);
-    whisperProcess = spawn(exe, [], { stdio: 'pipe', env: whisperEnv });
+  if (exe && fs.existsSync(exe)) {
+    log(`Запускаем GigaAM EXE: ${exe}`);
+    gigaamProcess = spawn(exe, [], {
+      stdio: 'pipe',
+      env: gigaamEnv,
+      windowsHide: true,
+    });
   } else if (py && fs.existsSync(py)) {
-    log(`Запускаем whisper через Python: ${py}`);
-    whisperProcess = spawn('python', [py], { stdio: 'pipe', env: whisperEnv });
+    const python = findGigaAmPython();
+    log(`Запускаем GigaAM через Python 3.12: ${python} ${py}`);
+    gigaamProcess = spawn(python, [py], {
+      stdio: 'pipe',
+      env: gigaamEnv,
+      windowsHide: true,
+    });
   } else {
-    log('⚠️ whisper_service не найден — должен быть запущен вручную');
+    log('❌ GigaAM-сервис не найден');
     return;
   }
 
-  whisperProcess.stdout.on('data', d => {
+  gigaamProcess.stdout.on('data', d => {
     const text = d.toString().trim();
     for (const line of text.split('\n')) {
-      if (line.startsWith('DOWNLOAD_PROGRESS:')) {
-        const [, pct, done, total] = line.split(':');
-        if (mainWindow) mainWindow.webContents.send('model-download-progress', { pct: +pct, done: +done, total: +total });
-      } else {
-        log(`[Whisper] ${line}`);
-      }
+      if (line) log(`[GigaAM] ${line}`);
     }
   });
-  whisperProcess.stderr.on('data', d => log(`[Whisper ERR] ${d.toString().trim()}`));
-  whisperProcess.on('close', code => log(`[Whisper] завершён, код: ${code}`));
+  gigaamProcess.stderr.on('data', d => log(`[GigaAM ERR] ${d.toString().trim()}`));
+  gigaamProcess.on('close', code => log(`[GigaAM] завершён, код: ${code}`));
 }
 
 function startBackend() {
@@ -148,11 +270,23 @@ function startBackend() {
     return;
   }
 
-  const groqKey = loadEnvVar('GROQ_API_KEY');
-  const hfToken = loadEnvVar('HF_TOKEN');
+  const userConfig = readUserConfig();
+  const customApiKey = decryptSecret(userConfig.apiKeyEncrypted);
+  const hfToken = loadHfToken();
+  const backendEnv = stripUnsupportedProxyEnv(process.env);
+  backendEnv.GIGAAM_SERVICE_PORT = loadGigaAmPort();
+  backendEnv.APP_USER_DATA = app.getPath('userData');
+  backendEnv.AI_PROVIDER_MODE = userConfig.aiMode || 'none';
+  backendEnv.PI_ANALYSIS_PROVIDER = 'openai-codex';
+  backendEnv.PI_ANALYSIS_MODEL = userConfig.piModel || 'gpt-5.6-sol';
+  backendEnv.PI_ANALYSIS_THINKING = userConfig.piThinking || 'high';
+  backendEnv.CUSTOM_API_ENDPOINT = userConfig.apiEndpoint || 'https://api.openai.com/v1';
+  backendEnv.CUSTOM_API_MODEL = userConfig.apiModel || 'gpt-4o-mini';
+  backendEnv.CUSTOM_API_KEY = customApiKey;
+  backendEnv.PI_CLI_JS = findBundledPiCli() || backendEnv.PI_CLI_JS || '';
   backendProcess = spawn(nodeBin, [serverJs], {
     cwd: backendDir,
-    env: { ...process.env, PORT: '3000', NODE_ENV: 'production', GROQ_API_KEY: groqKey || '', HF_TOKEN: hfToken || '' },
+    env: { ...backendEnv, PORT: '3000', NODE_ENV: 'production', HF_TOKEN: hfToken || '' },
     stdio: 'pipe'
   });
 
@@ -198,13 +332,14 @@ function createWindow() {
 
 app.whenReady().then(() => {
   log('app ready');
-  startWhisperService();
+  startGigaAmService();
   startBackend();
   startTelegramBot();
   createWindow();
 
-  // Автообновление — только в продакшне
-  if (IS_PROD) {
+  // Автообновление включается явно: устаревшие релизы не должны
+  // автоматически заменять локальную GigaAM-сборку.
+  if (IS_PROD && loadEnvVar('ENABLE_AUTO_UPDATE') === 'true') {
     autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} };
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -224,6 +359,8 @@ app.whenReady().then(() => {
     // Проверяем через 5 секунд после старта, потом каждые 4 часа
     setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+  } else if (IS_PROD) {
+    log('ℹ️ Автообновление отключено для локальной GigaAM-сборки');
   }
 }).catch(err => log(`❌ app.whenReady error: ${err.message}`));
 
@@ -240,32 +377,118 @@ function killProcess(proc) {
   }
 }
 
-function killWhisperByName() {
+function killGigaAmByName() {
   if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/f', '/im', 'whisper_service.exe'], { stdio: 'ignore' });
+    spawnSync('taskkill', ['/f', '/im', 'gigaam_service.exe'], { stdio: 'ignore' });
   }
 }
 
 app.on('window-all-closed', () => {
-  killProcess(whisperProcess); whisperProcess = null;
+  killProcess(gigaamProcess); gigaamProcess = null;
   killProcess(backendProcess); backendProcess = null;
   killProcess(botProcess); botProcess = null;
-  killWhisperByName();
+  killGigaAmByName();
   app.quit();
 });
 
 app.on('before-quit', () => {
   app.isQuitting = true;
-  killProcess(whisperProcess); whisperProcess = null;
+  killProcess(gigaamProcess); gigaamProcess = null;
   killProcess(backendProcess); backendProcess = null;
   killProcess(botProcess); botProcess = null;
-  killWhisperByName();
+  killGigaAmByName();
 });
 
 process.on('uncaughtException', err => log(`❌ uncaughtException: ${err.message}\n${err.stack}`));
 
 ipcMain.handle('get-bot-username', () => botUsername);
 ipcMain.handle('install-update', () => autoUpdater.quitAndInstall());
+
+ipcMain.handle('get-app-config', () => publicUserConfig());
+
+ipcMain.handle('save-app-config', async (_event, input = {}) => {
+  const previous = readUserConfig();
+  const next = { ...previous, version: USER_CONFIG_VERSION };
+  if (input.aiMode !== undefined) {
+    if (!['none', 'pi', 'custom-api'].includes(input.aiMode)) {
+      throw new Error('Неизвестный режим AI');
+    }
+    next.aiMode = input.aiMode;
+  }
+  if (input.piModel !== undefined) {
+    const model = String(input.piModel).trim();
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(model)) {
+      throw new Error('Некорректное название модели Pi');
+    }
+    next.piModel = model;
+  }
+  if (input.piThinking !== undefined) {
+    const thinking = String(input.piThinking).trim();
+    if (!PI_THINKING_LEVELS.has(thinking)) {
+      throw new Error('Некорректный уровень thinking Pi');
+    }
+    next.piThinking = thinking;
+  }
+  if (input.apiEndpoint !== undefined) {
+    const endpoint = String(input.apiEndpoint).trim().replace(/\/$/, '');
+    const parsed = new URL(endpoint);
+    const localHttp = parsed.protocol === 'http:'
+      && ['127.0.0.1', 'localhost'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !localHttp) {
+      throw new Error('API endpoint должен использовать HTTPS (HTTP разрешён только для localhost)');
+    }
+    next.apiEndpoint = endpoint;
+  }
+  if (input.apiModel !== undefined) {
+    const model = String(input.apiModel).trim();
+    if (!model) throw new Error('Укажите модель API');
+    next.apiModel = model;
+  }
+  if (input.apiKey !== undefined) {
+    next.apiKeyEncrypted = encryptSecret(String(input.apiKey).trim());
+  }
+  if (input.hfToken !== undefined) {
+    const token = String(input.hfToken).trim();
+    if (token && !token.startsWith('hf_')) {
+      throw new Error('Hugging Face токен должен начинаться с hf_');
+    }
+    next.hfTokenEncrypted = encryptSecret(token);
+  }
+  if (input.onboardingComplete !== undefined) {
+    next.onboardingComplete = Boolean(input.onboardingComplete);
+  }
+  if (next.aiMode === 'custom-api' && !decryptSecret(next.apiKeyEncrypted)) {
+    throw new Error('Для стороннего API нужен ключ');
+  }
+  writeUserConfig(next);
+
+  const hfChanged = previous.hfTokenEncrypted !== next.hfTokenEncrypted;
+  killProcess(backendProcess); backendProcess = null;
+  if (hfChanged) {
+    killProcess(gigaamProcess); gigaamProcess = null;
+    startGigaAmService();
+  }
+  startBackend();
+  return publicUserConfig();
+});
+
+ipcMain.handle('open-pi-login', () => {
+  const cliPath = findBundledPiCli();
+  if (!cliPath) throw new Error('Pi не найден в составе приложения');
+  const developmentNode = path.join(APP_PATH, 'resources', 'node.exe');
+  const nodeBin = IS_PROD
+    ? path.join(RESOURCES, 'node.exe')
+    : (fs.existsSync(developmentNode) ? developmentNode : 'node');
+  const config = readUserConfig();
+  const command = `title Pi Login && "${nodeBin}" "${cliPath}" --provider openai-codex --model "${config.piModel}" --thinking "${config.piThinking}"`;
+  const loginProcess = spawn('cmd.exe', ['/k', command], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false,
+  });
+  loginProcess.unref();
+  return { success: true };
+});
 
 // Установка Ollama + модели
 ipcMain.handle('setup-ai', async (event) => {
